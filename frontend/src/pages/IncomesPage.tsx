@@ -1,0 +1,247 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  api, Income, Category, Sort, fmtMoney, fmtDate, ImportResult,
+} from '@/api'
+import { Icon } from '@/icons'
+import { Modal, ConfirmModal } from '@/ui/Modal'
+import { useToast } from '@/ui/Toast'
+import { DataTable, Col } from '@/ui/DataTable'
+import { ExportImport } from '@/ui/ExportMenu'
+import { FilterModal } from '@/ui/FilterModal'
+
+type Draft = {
+  id?: number
+  date: string
+  category_id: number | null
+  description: string
+  amount: string
+  comment: string
+}
+const emptyDraft = (): Draft => ({
+  date: new Date().toISOString().slice(0, 10),
+  category_id: null, description: '', amount: '', comment: '',
+})
+
+
+export function IncomesPage() {
+  const toast = useToast()
+  const [rows, setRows] = useState<Income[]>([])
+  const [total, setTotal] = useState(0)
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [totalAmount, setTotalAmount] = useState(0)
+  const [loading, setLoading] = useState(false)
+  const [cats, setCats] = useState<Category[]>([])
+
+  const [months, setMonths] = useState<Set<number>>(new Set())
+  const [filters, setFilters] = useState<Record<string, string>>({})
+  const [sort, setSort] = useState<Sort[]>([{ field: 'date', dir: 'desc' }])
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(50)
+
+  const [draft, setDraft] = useState<Draft | null>(null)
+  const [del, setDel] = useState<Income | null>(null)
+  const [importRes, setImportRes] = useState<ImportResult | null>(null)
+
+  useEffect(() => { api.incomeCategories().then(setCats) }, [])
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await api.incomes({
+        months: [...months],
+        description: filters.description || undefined,
+        comment: filters.comment || undefined,
+        category: filters.category || undefined,
+        date_from: filters.date_from || undefined,
+        date_to: filters.date_to || undefined,
+        amount_min: filters.amount_min ? Number(filters.amount_min) : undefined,
+        amount_max: filters.amount_max ? Number(filters.amount_max) : undefined,
+        page, page_size: pageSize, sort,
+      })
+      setRows(res.items)
+      setTotal(res.total)
+      setTotalAmount(res.total_amount)
+    } catch (e: any) {
+      toast.show(e.message, 'err')
+    } finally {
+      setLoading(false)
+    }
+  }, [months, filters, sort, page, pageSize, toast])
+
+  useEffect(() => { load() }, [load])
+  useEffect(() => { setPage(1) }, [months, filters, pageSize])
+
+  const setFilter = (key: string, value: string) => {
+    setFilters((f) => {
+      const next = { ...f }
+      if (value) next[key] = value; else delete next[key]
+      return next
+    })
+  }
+  const clearFilters = () => { setFilters({}); setMonths(new Set()); setSort([{ field: 'date', dir: 'desc' }]) }
+  const activeCount = Object.values(filters).filter((v) => v.trim()).length + (months.size > 0 ? 1 : 0)
+
+  const cols: Col<Income>[] = useMemo(() => [
+    { key: 'date', label: 'Дата', width: '180px', sortable: true,
+    filterType: 'date', range: true,
+    render: (r) => fmtDate(r.date) },
+    { key: 'category', label: 'Категория', width: '1.2fr', sortable: true,
+    filterType: 'select', options: cats.map((c) => c.name),
+    render: (r) => r.category ?? '' },
+    { key: 'description', label: 'Описание', width: '1.5fr', sortable: true,
+    filterType: 'text', render: (r) => r.description ?? '' },
+    { key: 'amount', label: 'Сумма', width: '180px', sortable: true, align: 'right',
+    filterType: 'number', range: true,
+    render: (r) => fmtMoney(r.amount) },
+    { key: 'comment', label: 'Комментарий', width: '1fr', sortable: true,
+    filterType: 'text', render: (r) => r.comment ?? '' },
+  ], [cats])
+
+  const save = async () => {
+    if (!draft) return
+    if (!draft.date || !draft.category_id || !draft.amount) {
+      toast.show('Заполните дату, категорию и сумму', 'err'); return
+    }
+    const payload = {
+      date: draft.date, category_id: draft.category_id,
+      description: draft.description.trim() || null,
+      amount: parseFloat(draft.amount) || 0,
+      comment: draft.comment.trim() || null,
+    }
+    try {
+      if (draft.id) await api.updateIncome(draft.id, payload)
+      else await api.createIncome(payload)
+      toast.show(draft.id ? 'Доход обновлён' : 'Доход добавлен', 'ok')
+      setDraft(null); await load()
+    } catch (e: any) { toast.show(e.message, 'err') }
+  }
+
+  const doDelete = async () => {
+    if (!del) return
+    try {
+      await api.deleteIncome(del.id)
+      toast.show('Доход удалён', 'ok'); setDel(null); await load()
+    } catch (e: any) { toast.show(e.message, 'err') }
+  }
+
+  const importCsv = () => {
+    const inp = document.createElement('input')
+    inp.type = 'file'; inp.accept = '.csv'
+    inp.onchange = async () => {
+      if (!inp.files?.length) return
+      try {
+        const r = await api.importIncomes(inp.files[0])
+        setImportRes(r); await load()
+      } catch (e: any) {
+        setImportRes({ imported: 0, errors: [e.message], total_errors: 1 })
+      }
+    }
+    inp.click()
+  }
+
+  return (
+    <>
+      <section className="page-heading">
+        <div><p className="eyebrow">Раздел</p><h1>Доходы</h1></div>
+        <div className="heading-actions">
+          <ExportImport kind="incomes" onImport={importCsv} />
+          <button className="add-button" onClick={() => setDraft(emptyDraft())}>
+            <Icon name="plus" size={19} /><span>Добавить</span>
+          </button>
+        </div>
+      </section>
+
+      <DataTable
+        rows={rows}
+        cols={cols}
+        total={total}
+        totalAmount={totalAmount}
+        page={page}
+        pageSize={pageSize}
+        sort={sort}
+        filters={filters}
+        activeFilters={activeCount}
+        loading={loading}
+        onPageChange={setPage}
+        onPageSizeChange={setPageSize}
+        onSortChange={setSort}
+        onClearFilters={clearFilters}
+        onOpenFilters={() => setFiltersOpen(true)}
+        onRowClick={(r) => setDraft({
+          id: r.id, date: r.date, category_id: r.category_id,
+          description: r.description ?? '', amount: String(r.amount), comment: r.comment ?? '',
+        })}
+        renderActions={(r) => (
+          <>
+            <button onClick={() => setDraft({
+              id: r.id, date: r.date, category_id: r.category_id,
+              description: r.description ?? '', amount: String(r.amount), comment: r.comment ?? '',
+            })}><Icon name="edit" size={14} /></button>
+            <button onClick={() => setDel(r)}><Icon name="trash" size={14} /></button>
+          </>
+        )}
+      />
+
+      <FilterModal
+        open={filtersOpen}
+        cols={cols}
+        filters={filters}
+        months={{ selected: months, onChange: setMonths }}
+        onApply={(next) => setFilters(next)}
+        onClear={clearFilters}
+        onClose={() => setFiltersOpen(false)}
+      />
+
+      <Modal
+        open={!!draft} onClose={() => setDraft(null)}
+        title={draft?.id ? 'Изменить доход' : 'Добавить доход'}
+        footer={<>
+          <button onClick={() => setDraft(null)}>Отмена</button>
+          <button className="primary" onClick={save}>Сохранить</button>
+        </>}
+      >
+        {draft && <>
+          <label>Дата</label>
+          <input type="date" value={draft.date} onChange={(e) => setDraft({ ...draft, date: e.target.value })} />
+          <label>Категория</label>
+          <select value={draft.category_id ?? ''}
+            onChange={(e) => setDraft({ ...draft, category_id: e.target.value ? +e.target.value : null })}>
+            <option value="">—</option>
+            {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <label>Описание</label>
+          <input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
+          <label>Сумма</label>
+          <input type="number" step="0.01" value={draft.amount} onChange={(e) => setDraft({ ...draft, amount: e.target.value })} />
+          <label>Комментарий</label>
+          <input value={draft.comment} onChange={(e) => setDraft({ ...draft, comment: e.target.value })} />
+        </>}
+      </Modal>
+
+      <ConfirmModal
+        open={!!del} title="Удалить доход?"
+        message={del ? `«${del.description || del.category}» на сумму ${fmtMoney(del.amount)} за ${fmtDate(del.date)}. Действие необратимо.` : ''}
+        onOk={doDelete} onCancel={() => setDel(null)}
+      />
+
+      <Modal
+        open={!!importRes} onClose={() => setImportRes(null)}
+        title="Импорт завершён"
+        footer={<button className="primary" onClick={() => setImportRes(null)}>ОК</button>}
+      >
+        {importRes && <>
+          <p>
+            Добавлено: <b>{importRes.imported}</b>
+            {importRes.skipped ? <><br />Пропущено как дубликаты: <b>{importRes.skipped}</b></> : null}
+            {importRes.total_errors ? <><br />Ошибок: <b>{importRes.total_errors}</b></> : null}
+          </p>
+          {importRes.errors.length > 0 && (
+            <div className="err-list">
+              {importRes.errors.map((e, i) => <div key={i}>{e}</div>)}
+            </div>
+          )}
+        </>}
+      </Modal>
+    </>
+  )
+}

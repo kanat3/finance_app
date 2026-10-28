@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: traty_db
+    environment:
+      POSTGRES_USER: traty
+      POSTGRES_PASSWORD: traty
+      POSTGRES_DB: traty
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U traty -d traty"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build:
+      context: .
+    container_name: traty_app
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://traty:traty@db:5432/traty
+      EXCEL_PATH: /app/data/траты.xlsx
+      FRONTEND_DIST: /app/frontend_dist
+    volumes:
+      - ./data:/app/data:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db_data:
