@@ -3,6 +3,7 @@ import { api, Category, Subcategory } from '@/api'
 import { Icon } from '@/icons'
 import { ConfirmModal, PromptModal } from '@/ui/Modal'
 import { useToast } from '@/ui/Toast'
+import { ExportImport } from '@/ui/ExportMenu'
 
 type PromptState =
   | { kind: 'addCat' }
@@ -100,14 +101,9 @@ export function RefsPage() {
           <p className="eyebrow">Раздел</p>
           <h1>Справочники</h1>
         </div>
-        <div className="heading-actions">
-          <button onClick={() => window.open(api.exportUrl('refs', 'xlsx'))}>
-            <Icon name="download" size={16} /> Excel
-          </button>
-          <button onClick={() => window.open(api.exportUrl('refs', 'csv'))}>
-            <Icon name="download" size={16} /> CSV
-          </button>
-        </div>
+          <div className="heading-actions">
+            <ExportImport kind="refs" />
+          </div>
       </section>
 
       <div className="lists">

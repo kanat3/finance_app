@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useMemo, useState } from 'react'
 import {
   api, Expense, Category, Subcategory, Sort, fmtMoney, fmtDate, ImportResult,
 } from '@/api'
@@ -35,11 +35,13 @@ export function ExpensesPage() {
   const [totalAmount, setTotalAmount] = useState(0)
   const [loading, setLoading] = useState(false)
 
+  const lastErrorRef = useRef<string | null>(null)
+  const backoffUntilRef = useRef(0)
+
   const [cats, setCats] = useState<Category[]>([])
   const [subs, setSubs] = useState<Subcategory[]>([])
 
   // 🔹 состояние фильтров/пагинации/сортировки — всё живёт здесь
-  const [months, setMonths] = useState<Set<number>>(new Set())
   const [filters, setFilters] = useState<Record<string, string>>({})
   const [sort, setSort] = useState<Sort[]>([{ field: 'date', dir: 'desc' }])
   const [page, setPage] = useState(1)
@@ -56,11 +58,13 @@ export function ExpensesPage() {
   }, [])
 
   // Загрузка данных с сервера при любом изменении фильтров/сортировки/пагинации
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts: { silent?: boolean } = {}) => {
+    // не бьём в сеть, если недавно упали — ждём N секунд
+    if (Date.now() < backoffUntilRef.current) return
+
     setLoading(true)
     try {
-        const res = await api.expenses({
-        months: [...months],
+      const res = await api.expenses({
         description: filters.description || undefined,
         comment: filters.comment || undefined,
         category: filters.category || undefined,
@@ -72,21 +76,31 @@ export function ExpensesPage() {
         amount_max: filters.amount_max ? Number(filters.amount_max) : undefined,
         amount: filters.amount ? Number(filters.amount) : undefined,
         page, page_size: pageSize, sort,
-        })
-        setRows(res.items)
-        setTotal(res.total)
-        setTotalAmount(res.total_amount)
+      })
+      setRows(res.items)
+      setTotal(res.total)
+      setTotalAmount(res.total_amount)
+      lastErrorRef.current = null      // успех → сброс ошибки
     } catch (e: any) {
-        toast.show(e.message, 'err')
+      backoffUntilRef.current = Date.now() + 5000  // 5 сек не дёргаем сеть
+      if (!opts.silent && lastErrorRef.current !== e.message) {
+        toast.show('Не удалось загрузить: ' + e.message, 'err')
+        lastErrorRef.current = e.message
+      }
     } finally {
-        setLoading(false)
+      setLoading(false)
     }
-  }, [months, filters, sort, page, pageSize, toast])
+  }, [filters, sort, page, pageSize, toast])
 
   useEffect(() => { load() }, [load])
 
+  useEffect(() => {
+    const id = setInterval(() => load({ silent: true }), 10_000)
+    return () => clearInterval(id)
+  }, [load])
+
   // Сброс страницы при смене фильтров
-  useEffect(() => { setPage(1) }, [months, filters, pageSize])
+  useEffect(() => { setPage(1) }, [filters, pageSize])
 
   const setFilter = (key: string, value: string) => {
     setFilters((f) => {
@@ -95,8 +109,17 @@ export function ExpensesPage() {
       return next
     })
   }
-  const clearFilters = () => { setFilters({}); setMonths(new Set()); setSort([{ field: 'date', dir: 'desc' }]) }
-  const activeCount = Object.values(filters).filter((v) => v.trim()).length + (months.size > 0 ? 1 : 0)
+
+  const clearFilters = () => {
+    setFilters({})
+    setSort([{ field: 'date', dir: 'desc' }])
+    setPage(1)
+  }
+
+  const activeCount = useMemo(
+    () => Object.values(filters).filter(v => v && v.trim()).length,
+    [filters],
+  )
 
   const cols: Col<Expense>[] = useMemo(() => [
     {
@@ -233,10 +256,13 @@ export function ExpensesPage() {
         open={filtersOpen}
         cols={cols}
         filters={filters}
-        months={{ selected: months, onChange: setMonths }}
-        onApply={(next) => setFilters(next)}
+        onApply={setFilters}
         onClear={clearFilters}
         onClose={() => setFiltersOpen(false)}
+        categoriesForSub={(cat) => subs.filter(s => {
+          const c = cats.find(x => x.name === cat)
+          return c && s.category_id === c.id
+        }).map(s => s.name)}
       />
 
       <Modal

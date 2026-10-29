@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useMemo, useState } from 'react'
 import {
   api, Income, Category, Sort, fmtMoney, fmtDate, ImportResult,
 } from '@/api'
@@ -32,11 +32,13 @@ export function IncomesPage() {
   const [loading, setLoading] = useState(false)
   const [cats, setCats] = useState<Category[]>([])
 
-  const [months, setMonths] = useState<Set<number>>(new Set())
   const [filters, setFilters] = useState<Record<string, string>>({})
   const [sort, setSort] = useState<Sort[]>([{ field: 'date', dir: 'desc' }])
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(50)
+
+  const lastErrorRef = useRef<string | null>(null)
+  const backoffUntilRef = useRef(0)
 
   const [draft, setDraft] = useState<Draft | null>(null)
   const [del, setDel] = useState<Income | null>(null)
@@ -44,11 +46,13 @@ export function IncomesPage() {
 
   useEffect(() => { api.incomeCategories().then(setCats) }, [])
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts: { silent?: boolean } = {}) => {
+    // не бьём в сеть, если недавно упали — ждём N секунд
+    if (Date.now() < backoffUntilRef.current) return
+
     setLoading(true)
     try {
       const res = await api.incomes({
-        months: [...months],
         description: filters.description || undefined,
         comment: filters.comment || undefined,
         category: filters.category || undefined,
@@ -62,14 +66,24 @@ export function IncomesPage() {
       setTotal(res.total)
       setTotalAmount(res.total_amount)
     } catch (e: any) {
-      toast.show(e.message, 'err')
+      backoffUntilRef.current = Date.now() + 5000  // 5 сек не дёргаем сеть
+      if (!opts.silent && lastErrorRef.current !== e.message) {
+        toast.show('Не удалось загрузить: ' + e.message, 'err')
+        lastErrorRef.current = e.message
+      }
     } finally {
       setLoading(false)
     }
-  }, [months, filters, sort, page, pageSize, toast])
+  }, [filters, sort, page, pageSize, toast])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => { setPage(1) }, [months, filters, pageSize])
+
+  useEffect(() => {
+    const id = setInterval(() => load({ silent: true }), 10_000)
+    return () => clearInterval(id)
+  }, [load])
+
+  useEffect(() => { setPage(1) }, [filters, pageSize])
 
   const setFilter = (key: string, value: string) => {
     setFilters((f) => {
@@ -78,8 +92,17 @@ export function IncomesPage() {
       return next
     })
   }
-  const clearFilters = () => { setFilters({}); setMonths(new Set()); setSort([{ field: 'date', dir: 'desc' }]) }
-  const activeCount = Object.values(filters).filter((v) => v.trim()).length + (months.size > 0 ? 1 : 0)
+
+  const clearFilters = () => {
+    setFilters({})
+    setSort([{ field: 'date', dir: 'desc' }])
+    setPage(1)
+  }
+
+  const activeCount = useMemo(
+    () => Object.values(filters).filter(v => v && v.trim()).length,
+    [filters],
+  )
 
   const cols: Col<Income>[] = useMemo(() => [
     { key: 'date', label: 'Дата', width: '180px', sortable: true,
@@ -186,10 +209,13 @@ export function IncomesPage() {
         open={filtersOpen}
         cols={cols}
         filters={filters}
-        months={{ selected: months, onChange: setMonths }}
-        onApply={(next) => setFilters(next)}
+        onApply={setFilters}
         onClear={clearFilters}
         onClose={() => setFiltersOpen(false)}
+        categoriesForSub={(cat) => subs.filter(s => {
+          const c = cats.find(x => x.name === cat)
+          return c && s.category_id === c.id
+        }).map(s => s.name)}
       />
 
       <Modal

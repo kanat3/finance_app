@@ -5,6 +5,7 @@ export type IconName =
   | 'bell' | 'chevron' | 'arrowUp' | 'arrowDown'
   | 'plus' | 'bag' | 'taxi' | 'homeSmall' | 'coffee' | 'more'
   | 'edit' | 'trash' | 'download' | 'upload' | 'save' | 'x' | 'calendar'
+  | 'search'
 
 export function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
@@ -29,6 +30,7 @@ export function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
     save: (<><path d="M4 4h12l4 4v12H4Z" /><path d="M8 4v6h8V4M8 14h8v6H8z" /></>),
     x: <path d="m6 6 12 12M18 6 6 18" />,
     calendar: (<><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M8 3v4M16 3v4M3 10h18" /></>),
+    search: (  <><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></>)
   }
 
   return (

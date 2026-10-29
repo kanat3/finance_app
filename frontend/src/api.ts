@@ -135,16 +135,35 @@ function qs(obj: Record<string, any>): string {
   return s ? '?' + s : ''
 }
 
+let _offlineUntil = 0
+const OFFLINE_COOLDOWN_MS = 3000   // после ошибки 3 сек не бьём в сеть
+
 async function req<T>(url: string, opts: RequestInit = {}): Promise<T> {
-  const r = await fetch(url, opts)
+  if (Date.now() < _offlineUntil) {
+    throw new Error('Бэкенд недоступен — повтор через несколько секунд')
+  }
+
+  let r: Response
+  try {
+    r = await fetch(url, opts)
+  } catch (e: any) {
+    _offlineUntil = Date.now() + OFFLINE_COOLDOWN_MS
+    throw new Error('Нет связи с сервером')
+  }
+
   if (!r.ok) {
     const txt = await r.text()
     let msg = txt
     try { const j = JSON.parse(txt); msg = j.error || j.message || txt } catch {}
+    // 5xx = сервер сломан, тоже считаем «оффлайн»
+    if (r.status >= 500) _offlineUntil = Date.now() + OFFLINE_COOLDOWN_MS
     throw new Error(msg || `HTTP ${r.status}`)
   }
   return r.json() as Promise<T>
 }
+
+// сбросить «оффлайн» при следующем ручном действии
+export const resetOffline = () => { _offlineUntil = 0 }
 
 export const api = {
   // EXPENSES

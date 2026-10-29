@@ -26,18 +26,46 @@ export function ExportImport({
 
   return (
     <div className="export-menu" ref={ref}>
-      <button className="toolbar-btn" onClick={() => setOpen((v) => !v)}>
-        <Icon name="download" size={16} /> Экспорт <Icon name="chevron" size={12} />
+      <button
+        className="toolbar-btn"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+      >
+        <Icon name="download" size={15} />
+        <span>Экспорт</span>
+        <span className={`toolbar-caret ${open ? 'open' : ''}`}>
+          <Icon name="chevron" size={11} />
+        </span>
       </button>
+
       {open && (
-        <div className="export-dropdown">
-          <button onClick={() => download('xlsx')}>Скачать Excel</button>
-          <button onClick={() => download('csv')}>Скачать CSV</button>
+        <div className="export-dropdown" role="menu">
+          <button className="export-item" role="menuitem" onClick={() => download('xlsx')}>
+            <span className="export-item-icon xlsx">
+              <Icon name="download" size={14} />
+            </span>
+            <span className="export-item-body">
+              <span className="export-item-title">Excel</span>
+              <span className="export-item-sub">.xlsx</span>
+            </span>
+          </button>
+          <button className="export-item" role="menuitem" onClick={() => download('csv')}>
+            <span className="export-item-icon csv">
+              <Icon name="download" size={14} />
+            </span>
+            <span className="export-item-body">
+              <span className="export-item-title">CSV</span>
+              <span className="export-item-sub">.csv, разделитель ;</span>
+            </span>
+          </button>
         </div>
       )}
+
       {onImport && (
         <button className="toolbar-btn" onClick={onImport}>
-          <Icon name="upload" size={16} /> Импорт
+          <Icon name="upload" size={15} />
+          <span>Импорт</span>
         </button>
       )}
     </div>

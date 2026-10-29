@@ -376,7 +376,7 @@ h2 {
 .chip.all { background: var(--lime); color: var(--ink); border-color: var(--lime-deep); }
 
 /* ============================================================
-   ТУЛБАР (кнопки Экспорт / Импорт / Добавить)
+   ТУЛБАР
    ============================================================ */
 .toolbar {
   display: flex;
@@ -385,10 +385,11 @@ h2 {
   flex-wrap: wrap;
   align-items: center;
 }
+
 .toolbar-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   padding: 8px 14px;
   border: 1px solid var(--line);
   background: var(--surface);
@@ -398,44 +399,126 @@ h2 {
   color: var(--muted);
   cursor: pointer;
   transition: 150ms ease;
+  line-height: 1;
+  white-space: nowrap;
 }
 .toolbar-btn:hover {
   color: var(--ink);
   border-color: var(--ink);
   background: var(--paper);
 }
+.toolbar-btn:focus-visible {
+  outline: none;
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px rgba(25, 27, 24, 0.1);
+}
+.toolbar-btn svg { flex: 0 0 auto; color: currentColor; }
+.toolbar-btn > span { line-height: 1; }
+.toolbar-btn.has-active {
+  color: var(--ink);
+  border-color: var(--ink);
+  background: #f7f8f2;
+}
+
+.toolbar-caret {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 2px;
+  transform: rotate(90deg);
+  transition: transform 150ms ease;
+  opacity: .7;
+}
+.toolbar-caret.open { transform: rotate(-90deg); opacity: 1; }
+
+.filter-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: 2px;
+  border-radius: 9px;
+  background: var(--ink);
+  color: var(--lime);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+}
 
 /* ============================================================
-   ЭКСПОРТ / ИМПОРТ (кнопка + выпадающее меню)
+   ЭКСПОРТ: контейнер + выпадающее меню
    ============================================================ */
-.export-menu { position: relative; display: flex; gap: 8px; }
+.export-menu {
+  position: relative;
+  display: inline-flex;
+  gap: 8px;
+}
 .export-dropdown {
   position: absolute;
-  top: calc(100% + 6px);
+  top: calc(100% + 8px);
   left: 0;
   z-index: 60;
-  min-width: 180px;
+  min-width: 240px;
   padding: 6px;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 12px;
-  box-shadow: 0 12px 32px rgba(42, 45, 36, 0.12);
+  border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(42, 45, 36, 0.14);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
-.export-dropdown button {
-  display: block;
+.export-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   width: 100%;
-  text-align: left;
   padding: 10px 12px;
   border: 0;
   background: transparent;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 600;
+  border-radius: 10px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease;
 }
-.export-dropdown button:hover { background: var(--paper); }
+.export-item:hover { background: var(--paper); }
+.export-item-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px 10px 10px 4px;
+  flex-shrink: 0;
+}
+.export-item-icon.xlsx {
+  background: rgba(46, 160, 67, 0.14);
+  color: #2ea043;
+}
+.export-item-icon.csv {
+  background: rgba(2, 117, 216, 0.14);
+  color: #0275d8;
+}
+.export-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.export-item-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.2;
+}
+.export-item-sub {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.2;
+}
 
 /* ============================================================
-   DATA-TABLE (сводка + таблица + pagination)
+   DATA-TABLE
    ============================================================ */
 .data-table-wrap {
   background: var(--surface);
@@ -601,49 +684,6 @@ h2 {
 .page-input:focus { outline: none; border-color: var(--ink); }
 
 /* ============================================================
-   ФИЛЬТРЫ — КНОПКА В ШАПКЕ ТАБЛИЦЫ (в стиле «Экспорт»)
-   ============================================================ */
-.toolbar-btn.filter-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border: 1px solid var(--line);
-  background: var(--surface);
-  border-radius: 10px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
-  cursor: pointer;
-  transition: 150ms ease;
-}
-.toolbar-btn.filter-trigger:hover {
-  color: var(--ink);
-  border-color: var(--ink);
-  background: var(--paper);
-}
-.toolbar-btn.filter-trigger.has-active {
-  color: var(--ink);
-  border-color: var(--ink);
-  background: #f7f8f2;
-}
-.filter-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  margin-left: 2px;
-  border-radius: 9px;
-  background: var(--ink);
-  color: var(--lime);
-  font-size: 10px;
-  font-weight: 800;
-  line-height: 1;
-}
-
-/* ============================================================
    МОДАЛКИ (общий стиль)
    ============================================================ */
 .modal-bg {
@@ -676,7 +716,7 @@ h2 {
   margin: 10px 0 4px;
   font-size: 10px;
   font-weight: 800;
-  color: var(--muted);
+  color: var(--ink);
   text-transform: uppercase;
   letter-spacing: 1px;
 }
@@ -778,7 +818,6 @@ h2 {
   font-size: 11px;
   font-weight: 800;
 }
-
 .fm-sections {
   display: flex;
   flex-direction: column;
@@ -790,61 +829,55 @@ h2 {
   gap: 10px;
 }
 .fm-section-title {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 800;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 1px;
-}
-
-.fm-months {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.fm-months button {
-  padding: 7px 14px;
-  border: 1px solid var(--line);
-  background: white;
-  border-radius: 14px;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
   font-size: 12px;
-  font-weight: 600;
-  color: var(--muted);
-  cursor: pointer;
-  transition: 120ms ease;
-}
-.fm-months button:hover { border-color: var(--ink); color: var(--ink); }
-.fm-months button.on {
-  background: var(--ink);
-  color: white;
-  border-color: var(--ink);
-}
-.fm-months button.on.all {
-  background: var(--lime);
+  font-weight: 800;
   color: var(--ink);
-  border-color: var(--lime-deep);
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
 }
+.fm-section-title svg { color: var(--muted); }
 
 .fm-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 14px 16px;
 }
 .fm-field-wide { grid-column: 1 / -1; }
 .fm-field {
   display: grid;
   gap: 6px;
+  min-width: 0;
 }
-.fm-field label {
+.fm-field > label,
+.fm-range-label {
   font-size: 10px;
   font-weight: 800;
-  color: var(--muted);
+  color: var(--ink);
   text-transform: uppercase;
   letter-spacing: 1px;
+  opacity: 0.85;
 }
+
+.fm-range {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+.fm-range > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
 .fm-field input,
-.fm-field select {
+.fm-field select,
+.fm-range input {
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--line);
@@ -856,25 +889,171 @@ h2 {
   transition: 120ms ease;
 }
 .fm-field input:hover,
-.fm-field select:hover { border-color: var(--ink); }
+.fm-field select:hover,
+.fm-range input:hover { border-color: var(--ink); }
 .fm-field input:focus,
-.fm-field select:focus {
+.fm-field select:focus,
+.fm-range input:focus {
   outline: none;
   border-color: var(--ink);
   box-shadow: 0 0 0 3px rgba(25, 27, 24, 0.08);
 }
-.fm-range {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
+
+/* ============================================================
+   SearchSelect
+   ============================================================ */
+.ss { position: relative; }
+.ss-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  background: white;
+  border-radius: 10px;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: 120ms ease;
 }
-.fm-range > div { display: grid; gap: 4px; }
-.fm-range-label {
-  font-size: 10px;
-  font-weight: 700;
+.ss-trigger:hover { border-color: var(--ink); }
+.ss-trigger.has-value {
+  border-color: var(--ink);
+  background: #f7f8f2;
+  font-weight: 600;
+}
+.ss-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: .5px;
+}
+.ss-trigger.has-value .ss-value { color: var(--ink); }
+.ss-clear,
+.ss-caret {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.ss-clear:hover { color: var(--coral); }
+.ss-caret { transform: rotate(90deg); }
+
+.ss-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 80;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(42, 45, 36, 0.14);
+  overflow: hidden;
+}
+.ss-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+}
+.ss-search input {
+  flex: 1;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+}
+.ss-options {
+  max-height: 240px;
+  overflow: auto;
+  padding: 6px;
+}
+.ss-option {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ss-option:hover,
+.ss-option.highlight { background: var(--paper); }
+.ss-option.selected { font-weight: 700; }
+.ss-option.selected::before {
+  content: '✓ ';
+  color: var(--lime-deep);
+}
+.ss-empty {
+  padding: 12px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* ============================================================
+   NumberInput
+   ============================================================ */
+.ni input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 13px;
+  background: white;
+  font-variant-numeric: tabular-nums;
+  transition: 120ms ease;
+}
+.ni input:focus {
+  outline: none;
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px rgba(25, 27, 24, 0.08);
+}
+.ni.has-error input {
+  border-color: var(--coral);
+  background: #fef2f2;
+}
+.ni-error {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--coral);
+  font-weight: 600;
+}
+
+/* ============================================================
+   DateRangePresets
+   ============================================================ */
+.dr-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 10px;
+}
+.dr-preset {
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  background: white;
+  border-radius: 14px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  transition: 120ms ease;
+}
+.dr-preset:hover { border-color: var(--ink); color: var(--ink); }
+.dr-preset.on {
+  background: var(--ink);
+  color: white;
+  border-color: var(--ink);
 }
 
 /* ============================================================
@@ -1036,6 +1215,304 @@ h2 {
 }
 
 /* ============================================================
+   DATE INPUT — три сегмента + календарь
+   ============================================================ */
+.date-input-wrap {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.date-input-custom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+  transition: 120ms ease;
+  height: 38px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.date-input-custom:hover { border-color: var(--ink); }
+.date-input-custom:focus-within,
+.date-input-custom.focused {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px rgba(25, 27, 24, 0.08);
+}
+
+/* группа ДД . ММ . ГГГГ — компактная, без лишних отступов */
+.di-segments {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;                 /* никаких промежутков между input и точками */
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.di-segments input {
+  border: 0;
+  outline: none;
+  padding: 0;
+  margin: 0;
+  font-family: 'SF Mono', 'JetBrains Mono', 'Consolas', 'Menlo', monospace;  /* ← */
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  color: var(--ink);
+  background: transparent;
+  height: 28px;
+  line-height: 28px;
+  -webkit-appearance: none;
+  appearance: none;
+  border-radius: 6px;
+  transition: background 120ms ease, color 120ms ease;
+  box-sizing: content-box;
+  width: auto;
+  min-width: 16px;
+}
+
+/* ДД и ММ: 2 цифры → ~20px */
+.di-segments input.di-day,
+.di-segments input.di-month {
+  width: 20px;
+  min-width: 20px;
+}
+
+/* ГГГГ: 4 цифры → ~40px */
+.di-segments input.di-year {
+  width: 40px;
+  min-width: 40px;
+}
+
+.di-segments input:focus,
+.di-segments input:focus-visible {
+  outline: none;
+  box-shadow: none;
+  background: var(--lime);
+  color: var(--ink);
+}
+
+.di-segments input::placeholder {
+  color: var(--muted);
+  opacity: 0.55;
+  font-weight: 500;
+  letter-spacing: -0.3px;
+}
+
+.di-segments input::-webkit-outer-spin-button,
+.di-segments input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.di-segments input::-moz-focus-inner { border: 0; }
+
+/* Точки — вплотную к цифрам, без лишнего padding */
+.di-segments .di-sep {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  user-select: none;
+  padding: 0;             /* было 0 2px — убираем */
+  margin: 0 1px;          /* лёгкий воздух, 1px с каждой стороны */
+  display: inline-block;
+  width: 1ch;
+  text-align: center;
+}
+
+.di-cal-btn {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: 120ms ease;
+}
+.di-cal-btn:hover {
+  color: var(--ink);
+  background: var(--paper);
+}
+
+/* ============================================================
+   КАЛЕНДАРЬ
+   ============================================================ */
+.cal {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 90;
+  width: clamp(260px, 88vw, 300px);
+  max-width: calc(100vw - 24px);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 16px 40px rgba(42, 45, 36, 0.18);
+  padding: 10px;
+  user-select: none;
+}
+
+.cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.cal-nav {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--line);
+  background: white;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--muted);
+  transition: 120ms ease;
+}
+.cal-nav:hover {
+  color: var(--ink);
+  border-color: var(--ink);
+  background: var(--paper);
+}
+.cal-nav.cal-prev svg { transform: rotate(180deg); }
+
+.cal-title {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.cal-title-btn {
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink);
+  cursor: default;
+  padding: 0;
+}
+.cal-title-btn.year { color: var(--muted); font-weight: 600; }
+
+.cal-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 3px;
+  margin-bottom: 3px;
+}
+.cal-weekdays span {
+  text-align: center;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .2px;
+  padding: 3px 0;
+  min-width: 0;
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.cal-cell {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  min-width: 0;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  cursor: pointer;
+  transition: 120ms ease;
+}
+
+.cal-cell:hover:not(.disabled):not(.selected):not(.empty) {
+  background: var(--lime);
+  color: var(--ink);
+}
+.cal-cell.today {
+  color: var(--ink);
+  font-weight: 800;
+  box-shadow: inset 0 0 0 2px var(--lime-deep);
+}
+.cal-cell.today:hover:not(.selected) {
+  background: var(--lime);
+}
+.cal-cell.selected {
+  background: var(--ink);
+  color: white;
+  font-weight: 800;
+  box-shadow: none;
+}
+.cal-cell.selected:hover {
+  background: var(--ink);
+  color: white;
+}
+.cal-cell.disabled {
+  color: #d1d3cb;
+  cursor: not-allowed;
+}
+.cal-cell.empty {
+  cursor: default;
+  pointer-events: none;
+}
+
+.cal-footer {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.cal-footer button {
+  flex: 1;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  background: white;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  transition: 120ms ease;
+}
+.cal-footer button:hover {
+  color: var(--ink);
+  border-color: var(--ink);
+  background: var(--paper);
+}
+.cal-footer .cal-today {
+  background: var(--ink);
+  color: white;
+  border-color: var(--ink);
+}
+.cal-footer .cal-today:hover {
+  opacity: .9;
+  background: var(--ink);
+  color: white;
+}
+
+/* ============================================================
    АДАПТИВ
    ============================================================ */
 @media (max-width: 1120px) {
@@ -1071,13 +1548,10 @@ h2 {
   .summary-grid { grid-template-columns: 1fr; }
   .summary-card, .saving-card { min-height: 158px; }
   .modal { min-width: auto; width: calc(100% - 32px); }
-  .category-content { grid-template-columns: 1fr; }
-  .donut-wrap { max-width: 180px; }
 }
 
 @media (max-width: 640px) {
   .fm-grid, .fm-range { grid-template-columns: 1fr; }
-  .fm-months button { padding: 6px 12px; font-size: 11px; }
 }
 
 @media (max-width: 460px) {
@@ -1086,7 +1560,6 @@ h2 {
   .add-button { width: 46px; padding: 0; justify-content: center; }
   .add-button span { display: none; }
   .panel { padding: 20px 16px; }
-  .chart-wrap { height: 210px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
