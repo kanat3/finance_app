@@ -1,3 +1,5 @@
+import { ImportPreviewModal, ImportRow } from '@/ui/ImportPreviewModal'
+
 export const MONTHS = [
   'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
   'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь',
@@ -232,6 +234,47 @@ export const api = {
     }),
   deleteIncomeCategory: (id: number) =>
     req('/api/refs/income-categories/' + id, { method: 'DELETE' }),
+  // --- Категории доходов ---
+  createIncomeCategory: async (data: { name: string }): Promise<Category> => {
+    const res = await fetch('/api/refs/income-categories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || 'Ошибка создания категории дохода')
+    }
+    return res.json()
+  },
+
+  // --- Категории расходов ---
+  createExpenseCategory: async (data: { name: string }): Promise<Category> => {
+    const res = await fetch('/api/refs/expense-categories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || 'Ошибка создания категории расхода')
+    }
+    return res.json()
+  },
+
+  // --- Подкатегории расходов ---
+  createExpenseSubcategory: async (data: { category_id: number; name: string }): Promise<Subcategory> => {
+    const res = await fetch('/api/refs/expense-subcategories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.detail || 'Ошибка создания подкатегории')
+    }
+    return res.json()
+  },
 
   // STATS
   stats: (months: number[]) => {
@@ -239,14 +282,24 @@ export const api = {
     return req<Stats>('/api/stats' + q)
   },
 
-  // IMPORT
-  importExpenses: (file: File) => {
-    const fd = new FormData(); fd.append('file', file)
-    return req<ImportResult>('/api/import/expenses', { method: 'POST', body: fd })
+  // Отправка файла для превью
+  previewImport: async (file: File): Promise<{ rows: ImportRow[], warning?: string | null }> => {
+    const fd = new FormData()
+    fd.append('file', file)
+    const res = await fetch('/api/import/preview', { method: 'POST', body: fd })
+    if (!res.ok) throw new Error((await res.json()).detail || 'Ошибка чтения файла')
+    return res.json()
   },
-  importIncomes: (file: File) => {
-    const fd = new FormData(); fd.append('file', file)
-    return req<ImportResult>('/api/import/incomes', { method: 'POST', body: fd })
+
+  // Сохранение после редактирования
+  commitImport: async (rows: ImportRow[], kind: 'expenses' | 'incomes') => {
+    const res = await fetch('/api/import/commit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows, kind }),
+    })
+    if (!res.ok) throw new Error((await res.json()).detail || 'Ошибка сохранения')
+    return res.json() as Promise<{ imported: number, errors: string[] }>
   },
 
   // EXPORT / BACKUP

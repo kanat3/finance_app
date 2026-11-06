@@ -5,9 +5,13 @@ import {
 import { Icon } from '@/icons'
 import { Modal, ConfirmModal } from '@/ui/Modal'
 import { useToast } from '@/ui/Toast'
+import { SearchSelect } from '@/ui/SearchSelect'
+import { NumberInput } from '@/ui/NumberInput'
 import { DataTable, Col } from '@/ui/DataTable'
-import { ExportImport } from '@/ui/ExportMenu'
+import { ExportImport } from '@/ui/ExportImport'
 import { FilterModal } from '@/ui/FilterModal'
+import { DateInput } from '@/ui/DateInput'
+import { ImportPreviewModal, ImportRow } from '@/ui/ImportPreviewModal'
 
 type Draft = {
   id?: number
@@ -41,7 +45,6 @@ export function ExpensesPage() {
   const [cats, setCats] = useState<Category[]>([])
   const [subs, setSubs] = useState<Subcategory[]>([])
 
-  // 🔹 состояние фильтров/пагинации/сортировки — всё живёт здесь
   const [filters, setFilters] = useState<Record<string, string>>({})
   const [sort, setSort] = useState<Sort[]>([{ field: 'date', dir: 'desc' }])
   const [page, setPage] = useState(1)
@@ -49,20 +52,23 @@ export function ExpensesPage() {
 
   const [draft, setDraft] = useState<Draft | null>(null)
   const [del, setDel] = useState<Expense | null>(null)
+  
   const [importRes, setImportRes] = useState<ImportResult | null>(null)
+  const [previewRows, setPreviewRows] = useState<ImportRow[]>([])
+  const [previewWarning, setPreviewWarning] = useState<string | null>(null)
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false)
 
-  // Категории/подкатегории — один раз
   useEffect(() => {
     Promise.all([api.expenseCategories(), api.expenseSubcategories()])
       .then(([c, s]) => { setCats(c); setSubs(s) })
   }, [])
 
-  // Загрузка данных с сервера при любом изменении фильтров/сортировки/пагинации
   const load = useCallback(async (opts: { silent?: boolean } = {}) => {
-    // не бьём в сеть, если недавно упали — ждём N секунд
     if (Date.now() < backoffUntilRef.current) return
 
-    setLoading(true)
+    const scrollY = window.scrollY
+    if (!opts.silent) setLoading(true)
+
     try {
       const res = await api.expenses({
         description: filters.description || undefined,
@@ -80,15 +86,16 @@ export function ExpensesPage() {
       setRows(res.items)
       setTotal(res.total)
       setTotalAmount(res.total_amount)
-      lastErrorRef.current = null      // успех → сброс ошибки
+      lastErrorRef.current = null
     } catch (e: any) {
-      backoffUntilRef.current = Date.now() + 5000  // 5 сек не дёргаем сеть
+      backoffUntilRef.current = Date.now() + 5000
       if (!opts.silent && lastErrorRef.current !== e.message) {
         toast.show('Не удалось загрузить: ' + e.message, 'err')
         lastErrorRef.current = e.message
       }
     } finally {
-      setLoading(false)
+      if (!opts.silent) setLoading(false)
+      requestAnimationFrame(() => window.scrollTo(0, scrollY))
     }
   }, [filters, sort, page, pageSize, toast])
 
@@ -99,16 +106,7 @@ export function ExpensesPage() {
     return () => clearInterval(id)
   }, [load])
 
-  // Сброс страницы при смене фильтров
   useEffect(() => { setPage(1) }, [filters, pageSize])
-
-  const setFilter = (key: string, value: string) => {
-    setFilters((f) => {
-      const next = { ...f }
-      if (value) next[key] = value; else delete next[key]
-      return next
-    })
-  }
 
   const clearFilters = () => {
     setFilters({})
@@ -122,38 +120,12 @@ export function ExpensesPage() {
   )
 
   const cols: Col<Expense>[] = useMemo(() => [
-    {
-        key: 'date', label: 'Дата', width: '180px', sortable: true,
-        filterType: 'date', range: true,       // ← два инпута «с / по»
-        render: (r) => fmtDate(r.date),
-    },
-    {
-        key: 'category', label: 'Категория', width: '1.1fr', sortable: true,
-        filterType: 'select',
-        options: cats.map((c) => c.name),
-        render: (r) => r.category ?? '',
-    },
-    {
-        key: 'subcategory', label: 'Подкатегория', width: '1.1fr', sortable: true,
-        filterType: 'select',
-        options: [...new Set(subs.map((s) => s.name))],
-        render: (r) => r.subcategory ?? '',
-    },
-    {
-        key: 'description', label: 'Описание', width: '1.4fr', sortable: true,
-        filterType: 'text',
-        render: (r) => r.description ?? '',
-    },
-    {
-        key: 'amount', label: 'Сумма', width: '180px', sortable: true, align: 'right',
-        filterType: 'number', range: true,     // ← два инпута «от / до»
-        render: (r) => fmtMoney(r.amount),
-    },
-    {
-        key: 'comment', label: 'Комментарий', width: '1fr', sortable: true,
-        filterType: 'text',
-        render: (r) => r.comment ?? '',
-    },
+    { key: 'date', label: 'Дата', width: '180px', sortable: true, filterType: 'date', range: true, render: (r) => fmtDate(r.date) },
+    { key: 'category', label: 'Категория', width: '1.1fr', sortable: true, filterType: 'select', options: cats.map((c) => c.name), render: (r) => r.category ?? '' },
+    { key: 'subcategory', label: 'Подкатегория', width: '1.1fr', sortable: true, filterType: 'select', options: [...new Set(subs.map((s) => s.name))], render: (r) => r.subcategory ?? '' },
+    { key: 'description', label: 'Описание', width: '1.4fr', sortable: true, filterType: 'text', render: (r) => r.description ?? '' },
+    { key: 'amount', label: 'Сумма', width: '180px', sortable: true, align: 'right', filterType: 'number', range: true, render: (r) => fmtMoney(r.amount) },
+    { key: 'comment', label: 'Комментарий', width: '1fr', sortable: true, filterType: 'text', render: (r) => r.comment ?? '' },
   ], [cats, subs])
 
   const save = async () => {
@@ -185,19 +157,89 @@ export function ExpensesPage() {
     } catch (e: any) { toast.show(e.message, 'err') }
   }
 
-  const importCsv = () => {
+  const importCsv = (format: 'xlsx' | 'csv' = 'csv') => {
     const inp = document.createElement('input')
-    inp.type = 'file'; inp.accept = '.csv'
-    inp.onchange = async () => {
+    inp.type = 'file'
+    inp.accept = format === 'xlsx' ? '.xlsx,.xls' : '.csv,.txt'
+    
+    inp.onchange = () => {
       if (!inp.files?.length) return
-      try {
-        const r = await api.importExpenses(inp.files[0])
-        setImportRes(r); await load()
-      } catch (e: any) {
-        setImportRes({ imported: 0, errors: [e.message], total_errors: 1 })
-      }
+      
+      api.previewImport(inp.files[0])
+        .then(res => {
+          setPreviewRows(res.rows)
+          setPreviewWarning(res.warning || null)
+          setIsPreviewOpen(true)
+        })
+        .catch(err => toast.show(err.message, 'err'))
     }
     inp.click()
+  }
+
+  const handleSaveImported = async (editedRows: ImportRow[]) => {
+    try {
+      for (const row of editedRows) {
+        const catName = row.category.trim();
+        if (!catName) continue;
+
+        let cat = cats.find(c => c.name.toLowerCase() === catName.toLowerCase());
+        
+        if (!cat) {
+          try {
+            const newCat = await api.createExpenseCategory({ name: catName });
+            cat = newCat;
+            setCats(prev => [...prev, newCat]);
+          } catch (e) {
+            console.warn(`Не удалось создать категорию ${catName}`, e);
+            continue;
+          }
+        }
+
+        let subId = null;
+        const subName = row.subcategory?.trim();
+        
+        if (subName) {
+          let sub = subs.find(s => 
+            s.category_id === cat!.id && 
+            s.name.toLowerCase() === subName.toLowerCase()
+          );
+
+          if (!sub) {
+            try {
+              const newSub = await api.createExpenseSubcategory({ 
+                category_id: cat!.id, 
+                name: subName 
+              });
+              sub = newSub;
+              setSubs(prev => [...prev, newSub]);
+            } catch (e) {
+              console.warn(`Не удалось создать подкатегорию ${subName}`, e);
+            }
+          }
+          
+          if (sub) subId = sub.id;
+        }
+
+        await api.createExpense({
+          date: row.date,
+          category_id: cat!.id,
+          subcategory_id: subId,
+          description: row.description || null,
+          amount: parseFloat(row.amount as string) || 0,
+          comment: row.comment || null,
+        });
+      }
+      
+      toast.show(`Успешно импортировано: ${editedRows.length}`, 'ok');
+      setIsPreviewOpen(false);
+      setPreviewRows([]);
+      setPreviewWarning(null);
+      await load();
+      
+    } catch (e: any) {
+      toast.show('Ошибка при сохранении: ' + e.message, 'err');
+      throw e;
+    }
   }
 
   const draftSubs = draft ? subs.filter((s) => s.category_id === draft.category_id) : []
@@ -273,28 +315,50 @@ export function ExpensesPage() {
           <button className="primary" onClick={save}>Сохранить</button>
         </>}
       >
-        {draft && <>
-          <label>Дата</label>
-          <input type="date" value={draft.date} onChange={(e) => setDraft({ ...draft, date: e.target.value })} />
-          <label>Категория</label>
-          <select value={draft.category_id ?? ''}
-            onChange={(e) => setDraft({ ...draft, category_id: e.target.value ? +e.target.value : null, subcategory_id: null })}>
-            <option value="">—</option>
-            {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-          <label>Подкатегория</label>
-          <select value={draft.subcategory_id ?? ''}
-            onChange={(e) => setDraft({ ...draft, subcategory_id: e.target.value ? +e.target.value : null })}>
-            <option value="">—</option>
-            {draftSubs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-          <label>Описание</label>
-          <input value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
-          <label>Сумма</label>
-          <input type="number" step="0.01" value={draft.amount} onChange={(e) => setDraft({ ...draft, amount: e.target.value })} />
-          <label>Комментарий</label>
-          <input value={draft.comment} onChange={(e) => setDraft({ ...draft, comment: e.target.value })} />
-        </>}
+        {draft && (
+          <div className="modal-form">
+            <div className="modal-field">
+              <label>Дата</label>
+              <DateInput value={draft.date} onChange={(v) => setDraft({ ...draft, date: v })} />
+            </div>
+            <div className="modal-field">
+              <label>Категория</label>
+              <SearchSelect
+                value={draft.category_id ? (cats.find(c => c.id === draft.category_id)?.name ?? '') : ''}
+                onChange={(name) => {
+                  const c = cats.find(x => x.name === name) ?? null
+                  setDraft({ ...draft, category_id: c?.id ?? null, subcategory_id: null })
+                }}
+                options={cats.map(c => c.name)}
+                placeholder="Выберите категорию"
+              />
+            </div>
+            <div className="modal-field">
+              <label>Подкатегория</label>
+              <SearchSelect
+                value={draft.subcategory_id ? (draftSubs.find(s => s.id === draft.subcategory_id)?.name ?? '') : ''}
+                onChange={(name) => {
+                  const s = draftSubs.find(x => x.name === name) ?? null
+                  setDraft({ ...draft, subcategory_id: s?.id ?? null })
+                }}
+                options={draftSubs.map(s => s.name)}
+                placeholder={draft.category_id ? 'Выберите подкатегорию' : 'Сначала выберите категорию'}
+              />
+            </div>
+            <div className="modal-field">
+              <label>Описание</label>
+              <input className="text-input" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
+            </div>
+            <div className="modal-field">
+              <label>Сумма</label>
+              <NumberInput value={draft.amount} onChange={(v) => setDraft({ ...draft, amount: v })} placeholder="0" />
+            </div>
+            <div className="modal-field">
+              <label>Комментарий</label>
+              <input className="text-input" value={draft.comment} onChange={(e) => setDraft({ ...draft, comment: e.target.value })} />
+            </div>
+          </div>
+        )}
       </Modal>
 
       <ConfirmModal
@@ -315,12 +379,21 @@ export function ExpensesPage() {
             {importRes.total_errors ? <><br />Ошибок: <b>{importRes.total_errors}</b></> : null}
           </p>
           {importRes.errors.length > 0 && (
-            <div className="err-list">
-              {importRes.errors.map((e, i) => <div key={i}>{e}</div>)}
-            </div>
+            <div className="err-list">{importRes.errors.map((e, i) => <div key={i}>{e}</div>)}</div>
           )}
         </>}
       </Modal>
+
+      <ImportPreviewModal
+        open={isPreviewOpen}
+        rows={previewRows}
+        warning={previewWarning}
+        onClose={() => setIsPreviewOpen(false)}
+        onSave={handleSaveImported}
+        type="expenses"
+        categories={cats}
+        subcategories={subs}
+      />
     </>
   )
 }

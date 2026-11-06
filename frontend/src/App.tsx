@@ -71,7 +71,7 @@ function Shell() {
         <div className="header-inner">
           <button className="brand" onClick={() => setPage('Главная')}>
             <span className="brand-mark">₽</span>
-            <span>монета</span>
+            <span>Манимани</span>
           </button>
           <nav className="nav">
             {NAV.map((item) => (

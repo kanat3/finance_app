@@ -1053,213 +1053,267 @@ def _human_error(exc: Exception) -> str:
         return "Нарушение целостности данных"
     return f"Ошибка: {exc.__class__.__name__}"
 
-@app.post("/api/import/expenses")
-def import_expenses():
-    if "file" not in request.files:
-        abort(400, "Файл не передан")
-    f = request.files["file"]
-    raw = f.read()
+# ============================================================
+# IMPORT: PREVIEW & COMMIT (с поддержкой редактирования на фронте)
+# ============================================================
+
+def _aliases_import() -> dict:
+    """Маппинг русских заголовков из банковских выписок и нашего экспорта."""
+    return {
+        "дата": "date",
+        "date": "date",
+        "категория": "category",
+        "category": "category",
+        "подкатегория": "subcategory",
+        "subcategory": "subcategory",
+        "подробное описание": "description",
+        "описание": "description",
+        "description": "description",
+        "стоимость": "amount",
+        "сумма": "amount",
+        "amount": "amount",
+        "комментарий": "comment",
+        "comment": "comment",
+    }
+
+
+def _parse_import_file(file_storage):
+    """Читает CSV/TXT/XLSX и возвращает список словарей с нормализованными ключами."""
+    filename = file_storage.filename.lower()
+    raw = file_storage.read()
+
+    if filename.endswith(".xlsx"):
+        wb = load_workbook(io.BytesIO(raw), data_only=True)
+        ws = wb.active
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            return []
+        headers = [str(h).strip().lower() if h else "" for h in rows[0]]
+
+        result = []
+        for r in rows[1:]:
+            row_dict = {}
+            for i, val in enumerate(r):
+                if i >= len(headers):
+                    break
+                key = headers[i]
+
+                # --- ИСПРАВЛЕНИЕ ДЛЯ EXCEL ---
+                # Если значение — строка, но выглядит как число с запятой ("424,79")
+                # или числом с пробелами ("1 234,50"), конвертируем в float
+                if isinstance(val, str):
+                    clean_val = val.strip().replace(" ", "").replace(",", ".")
+                    try:
+                        val = float(clean_val)
+                    except ValueError:
+                        pass
+
+                row_dict[key] = val
+            result.append(row_dict)
+        return result
+
     try:
         text = raw.decode("utf-8-sig")
     except UnicodeDecodeError:
-        try:
-            text = raw.decode("cp1251")
-        except UnicodeDecodeError:
-            return jsonify({
-                "imported": 0, "skipped": 0, "total_errors": 1,
-                "errors": ["Файл не в кодировке UTF-8 или Windows-1251"],
-            }), 400
+        text = raw.decode("cp1251")
 
     if not text.strip():
-        return jsonify({
-            "imported": 0, "skipped": 0, "total_errors": 1,
-            "errors": ["Файл пустой"],
-        }), 400
+        return []
 
-    delim = _detect_delimiter(text)
+    first_line = text.splitlines()[0] if text else ""
+
+    if ";" in first_line:
+        delim = ";"
+    elif "\t" in first_line:
+        delim = "\t"
+    else:
+        delim = ","  # Крайний случай, если файл действительно с запятыми (и без десятичных)
+
     reader = csv.DictReader(io.StringIO(text), delimiter=delim)
+    return list(reader)
 
-    # Проверка обязательных колонок
-    required = {"date", "category", "amount"}
-    if reader.fieldnames:
-        norm = {(_aliases_exp().get(k.strip().lower()) or k.strip().lower()) for k in reader.fieldnames}
-        missing = required - norm
-        if missing:
-            return jsonify({
-                "imported": 0, "skipped": 0, "total_errors": 1,
-                "errors": [
-                    f"В CSV не хватает колонок: {', '.join(sorted(missing))}. "
-                    f"Ожидаются: дата, категория, стоимость, "
-                    f"опционально — подкатегория, описание, комментарий."
-                ],
-            }), 400
+@app.post("/api/import/preview")
+def import_preview():
+    """Парсит файл и возвращает JSON для редактирования. НЕ СОХРАНЯЕТ в БД."""
+    if "file" not in request.files:
+        abort(400, "Файл не передан")
+    
+    file = request.files["file"]
+    filename = file.filename.lower()
+    raw_bytes = file.read()
+    
+    # --- ПРОВЕРКА РАЗДЕЛИТЕЛЯ ---
+    warning_msg = None
+    if not filename.endswith(('.xlsx', '.xls')):
+        try:
+            # Пробуем прочитать текст для анализа
+            try:
+                text_sample = raw_bytes.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                text_sample = raw_bytes.decode("cp1251")
+            
+            first_line = text_sample.split('\n')[0] if text_sample else ""
+            # Если запятых больше чем точек с запятой, это явно CSV с запятыми
+            if first_line.count(',') > first_line.count(';'):
+                warning_msg = "Внимание: ваш файл похож на CSV с разделителем-запятой. Если в суммах тоже есть запятые (например, 424,79), данные могли «съехать» по колонкам. Пожалуйста, проверьте таблицу ниже."
+        except Exception as e:
+            print("Ошибка при проверке разделителя:", e)
+    # ----------------------------
 
-    errors_list, imported, skipped = [], 0, 0
-    conn = get_conn()
+    # Создаем file-like объект для повторного чтения
+    import io
+    file_stream = io.BytesIO(raw_bytes)
+    file_stream.filename = file.filename # type: ignore
+
     try:
-        with conn.cursor() as cur:
-            for i, row in enumerate(reader, 2):
-                try:
-                    row2 = {_aliases_exp()[k.strip().lower()]: v
-                            for k, v in row.items() if k and k.strip()}
+        raw_rows = _parse_import_file(file_stream)
+    except Exception as e:
+        return jsonify({"errors": [f"Ошибка чтения файла: {str(e)}"]}), 400
 
-                    if not row2.get("date"):
-                        raise ValueError("не указана дата")
-                    if not row2.get("category"):
-                        raise ValueError("не указана категория")
+    aliases = _aliases_import()
+    result = []
 
-                    d = _parse_date(row2["date"])
-                    cat = row2["category"].strip()
-                    if not cat:
-                        raise ValueError("пустая категория")
+    for i, row in enumerate(raw_rows, 2):
+        row2 = {aliases.get(str(k).strip().lower(), str(k).strip().lower()): v 
+                for k, v in row.items() if k}
 
-                    cur.execute(
-                        "INSERT INTO expense_categories(name) VALUES(%s) "
-                        "ON CONFLICT(name) DO UPDATE SET name=EXCLUDED.name RETURNING id",
-                        (cat,),
-                    )
-                    cid = cur.fetchone()[0]
+        if not row2.get("date") or not row2.get("category"):
+            continue
 
-                    sid = None
-                    sub = (row2.get("subcategory") or "").strip()
-                    if sub:
-                        cur.execute(
-                            "INSERT INTO expense_subcategories(category_id, name) "
-                            "VALUES(%s, %s) "
-                            "ON CONFLICT(category_id, name) DO UPDATE SET name=EXCLUDED.name "
-                            "RETURNING id",
-                            (cid, sub),
-                        )
-                        sid = cur.fetchone()[0]
+        try:
+            raw_date = str(row2["date"]).strip()
+            if "." in raw_date:
+                dt = datetime.strptime(raw_date, "%d.%m.%Y")
+            else:
+                dt = datetime.strptime(raw_date, "%Y-%m-%d")
+            date_str = dt.strftime("%Y-%m-%d")
+        except:
+            date_str = datetime.now().strftime("%Y-%m-%d")
 
-                    amount = _parse_amount(row2.get("amount"))
-                    desc = (row2.get("description") or "").strip() or None
-                    comm = (row2.get("comment") or "").strip() or None
+        raw_amount = row2.get("amount")
+        amount_str = str(raw_amount).replace(" ", "").replace(",", ".") if raw_amount is not None else "0"
+        
+        try:
+            amount = float(amount_str)
+        except:
+            amount = 0.0
 
-                    # Проверка дубликата
-                    cur.execute(
-                        "SELECT 1 FROM expenses WHERE date=%s AND category_id=%s "
-                        "AND COALESCE(subcategory_id,-1)=COALESCE(%s,-1) "
-                        "AND amount=%s AND COALESCE(description,'')=COALESCE(%s,'') "
-                        "AND COALESCE(comment,'')=COALESCE(%s,'') LIMIT 1",
-                        (d, cid, sid, amount, desc, comm),
-                    )
-                    if cur.fetchone():
-                        skipped += 1
-                        continue
-
-                    cur.execute(
-                        "INSERT INTO expenses(date, category_id, subcategory_id, "
-                        "description, amount, comment) "
-                        "VALUES(%s, %s, %s, %s, %s, %s)",
-                        (d, cid, sid, desc, amount, comm),
-                    )
-                    imported += 1
-                except Exception as e:
-                    errors_list.append(f"Строка {i}: {_human_error(e)}")
-            conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+        result.append({
+            "id": f"preview-{i}",
+            "date": date_str,
+            "category": str(row2.get("category", "")).strip(),
+            "subcategory": str(row2.get("subcategory", "")).strip() if row2.get("subcategory") else "",
+            "description": str(row2.get("description", "")).strip(),
+            "amount": amount,
+            "comment": str(row2.get("comment", "")).strip() if row2.get("comment") else "",
+        })
 
     return jsonify({
-        "imported": imported,
-        "skipped": skipped,
-        "errors": errors_list[:30],
-        "total_errors": len(errors_list),
+        "rows": result,
+        "warning": warning_msg
     })
 
+@app.post("/api/import/commit")
+def import_commit():
+    """Принимает отредактированный массив строк и сохраняет в БД."""
+    data = request.get_json(force=True)
+    rows = data.get("rows", [])
+    kind = data.get("kind", "expenses")  # expenses или incomes
 
-@app.post("/api/import/incomes")
-def import_incomes():
-    if "file" not in request.files:
-        abort(400, "Файл не передан")
-    f = request.files["file"]
-    raw = f.read()
-    try:
-        text = raw.decode("utf-8-sig")
-    except UnicodeDecodeError:
-        try:
-            text = raw.decode("cp1251")
-        except UnicodeDecodeError:
-            return jsonify({
-                "imported": 0, "skipped": 0, "total_errors": 1,
-                "errors": ["Файл не в кодировке UTF-8 или Windows-1251"],
-            }), 400
+    if not rows:
+        return jsonify({"imported": 0, "errors": ["Нет данных для сохранения"]}), 400
 
-    if not text.strip():
-        return jsonify({
-            "imported": 0, "skipped": 0, "total_errors": 1,
-            "errors": ["Файл пустой"],
-        }), 400
-
-    delim = _detect_delimiter(text)
-    reader = csv.DictReader(io.StringIO(text), delimiter=delim)
-
-    required = {"date", "category", "amount"}
-    if reader.fieldnames:
-        norm = {(_aliases_inc().get(k.strip().lower()) or k.strip().lower()) for k in reader.fieldnames}
-        missing = required - norm
-        if missing:
-            return jsonify({
-                "imported": 0, "skipped": 0, "total_errors": 1,
-                "errors": [
-                    f"В CSV не хватает колонок: {', '.join(sorted(missing))}. "
-                    f"Ожидаются: дата, категория, сумма, "
-                    f"опционально — описание, комментарий."
-                ],
-            }), 400
-
-    errors_list, imported, skipped = [], 0, 0
+    imported, errors_list = 0, []
     conn = get_conn()
+
     try:
         with conn.cursor() as cur:
-            for i, row in enumerate(reader, 2):
+            for i, row in enumerate(rows, 1):
                 try:
-                    row2 = {_aliases_inc()[k.strip().lower()]: v
-                            for k, v in row.items() if k and k.strip()}
+                    # 1. Дата
+                    d = _parse_date(row["date"])
 
-                    if not row2.get("date"):
-                        raise ValueError("не указана дата")
-                    if not row2.get("category"):
+                    # 2. Категория
+                    cat_name = row.get("category", "").strip()
+                    if not cat_name:
                         raise ValueError("не указана категория")
 
-                    d = _parse_date(row2["date"])
-                    cat = row2["category"].strip()
-                    if not cat:
-                        raise ValueError("пустая категория")
+                    if kind == "expenses":
+                        # Создаем/находим категорию
+                        cur.execute(
+                            "INSERT INTO expense_categories(name) VALUES(%s) "
+                            "ON CONFLICT(name) DO UPDATE SET name=EXCLUDED.name RETURNING id",
+                            (cat_name,),
+                        )
+                        cid = cur.fetchone()["id"] if isinstance(cur.fetchone(), dict) else cur.fetchone()[0]
 
-                    cur.execute(
-                        "INSERT INTO income_categories(name) VALUES(%s) "
-                        "ON CONFLICT(name) DO UPDATE SET name=EXCLUDED.name RETURNING id",
-                        (cat,),
-                    )
-                    cid = cur.fetchone()[0]
+                        # Подкатегория
+                        sid = None
+                        sub_name = row.get("subcategory", "").strip()
+                        if sub_name:
+                            cur.execute(
+                                "INSERT INTO expense_subcategories(category_id, name) "
+                                "VALUES(%s, %s) "
+                                "ON CONFLICT(category_id, name) DO UPDATE SET name=EXCLUDED.name "
+                                "RETURNING id",
+                                (cid, sub_name),
+                            )
+                            sid_row = cur.fetchone()
+                            sid = sid_row["id"] if isinstance(sid_row, dict) else sid_row[0]
 
-                    amount = _parse_amount(row2.get("amount"))
-                    desc = (row2.get("description") or "").strip() or None
-                    comm = (row2.get("comment") or "").strip() or None
+                        amount = float(row.get("amount", 0))
+                        desc = row.get("description", "").strip() or None
+                        comm = row.get("comment", "").strip() or None
 
-                    cur.execute(
-                        "SELECT 1 FROM incomes WHERE date=%s AND category_id=%s "
-                        "AND amount=%s AND COALESCE(description,'')=COALESCE(%s,'') "
-                        "AND COALESCE(comment,'')=COALESCE(%s,'') LIMIT 1",
-                        (d, cid, amount, desc, comm),
-                    )
-                    if cur.fetchone():
-                        skipped += 1
-                        continue
+                        # Проверка на дубликат
+                        cur.execute(
+                            "SELECT 1 FROM expenses WHERE date=%s AND category_id=%s "
+                            "AND COALESCE(subcategory_id,-1)=COALESCE(%s,-1) "
+                            "AND amount=%s AND COALESCE(description,'')=COALESCE(%s,'') "
+                            "AND COALESCE(comment,'')=COALESCE(%s,'') LIMIT 1",
+                            (d, cid, sid, amount, desc, comm),
+                        )
+                        if cur.fetchone():
+                            continue  # Пропускаем дубликат
 
-                    cur.execute(
-                        "INSERT INTO incomes(date, category_id, description, amount, comment) "
-                        "VALUES(%s, %s, %s, %s, %s)",
-                        (d, cid, desc, amount, comm),
-                    )
+                        cur.execute(
+                            "INSERT INTO expenses(date, category_id, subcategory_id, "
+                            "description, amount, comment) VALUES(%s, %s, %s, %s, %s, %s)",
+                            (d, cid, sid, desc, amount, comm),
+                        )
+
+                    else:  # incomes
+                        cur.execute(
+                            "INSERT INTO income_categories(name) VALUES(%s) "
+                            "ON CONFLICT(name) DO UPDATE SET name=EXCLUDED.name RETURNING id",
+                            (cat_name,),
+                        )
+                        cid_row = cur.fetchone()
+                        cid = cid_row["id"] if isinstance(cid_row, dict) else cid_row[0]
+
+                        amount = float(row.get("amount", 0))
+                        desc = row.get("description", "").strip() or None
+                        comm = row.get("comment", "").strip() or None
+
+                        cur.execute(
+                            "SELECT 1 FROM incomes WHERE date=%s AND category_id=%s "
+                            "AND amount=%s AND COALESCE(description,'')=COALESCE(%s,'') "
+                            "AND COALESCE(comment,'')=COALESCE(%s,'') LIMIT 1",
+                            (d, cid, amount, desc, comm),
+                        )
+                        if cur.fetchone():
+                            continue
+
+                        cur.execute(
+                            "INSERT INTO incomes(date, category_id, description, amount, comment) "
+                            "VALUES(%s, %s, %s, %s, %s)",
+                            (d, cid, desc, amount, comm),
+                        )
+
                     imported += 1
                 except Exception as e:
                     errors_list.append(f"Строка {i}: {_human_error(e)}")
+
             conn.commit()
     except Exception:
         conn.rollback()
@@ -1269,7 +1323,6 @@ def import_incomes():
 
     return jsonify({
         "imported": imported,
-        "skipped": skipped,
         "errors": errors_list[:30],
         "total_errors": len(errors_list),
     })

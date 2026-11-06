@@ -13,8 +13,11 @@ export function SearchSelect({
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [highlight, setHighlight] = useState(0)
+  const [openUpwards, setOpenUpwards] = useState(false)
+  
   const ref = useRef<HTMLDivElement>(null)
 
+  // Закрытие по клику вне
   useEffect(() => {
     if (!open) return
     const h = (e: MouseEvent) => {
@@ -23,6 +26,17 @@ export function SearchSelect({
     document.addEventListener('mousedown', h)
     return () => document.removeEventListener('mousedown', h)
   }, [open])
+
+  const toggleOpen = () => {
+    if (!open && ref.current) {
+      // Определяем, куда открывать
+      const rect = ref.current.getBoundingClientRect()
+      const spaceBelow = window.innerHeight - rect.bottom
+      setOpenUpwards(spaceBelow < 300) // 300px — примерная высота списка
+    }
+    setOpen(!open)
+    setQuery('')
+  }
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -43,7 +57,7 @@ export function SearchSelect({
       <button
         type="button"
         className={`ss-trigger ${value ? 'has-value' : ''}`}
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggleOpen}
       >
         <span className="ss-value">{value || placeholder || 'Все'}</span>
         {value ? (
@@ -60,7 +74,13 @@ export function SearchSelect({
       </button>
 
       {open && (
-        <div className="ss-popover">
+        <div 
+          className="ss-popover" 
+          style={{
+            top: openUpwards ? 'auto' : 'calc(100% + 6px)',
+            bottom: openUpwards ? 'calc(100% + 6px)' : 'auto',
+          }}
+        >
           <div className="ss-search">
             <Icon name="search" size={14} />
             <input

@@ -597,6 +597,10 @@ h2 {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.data-row .ss-popover {
+  min-width: 200px;
+  max-width: 280px;
+}
 .row-actions {
   display: flex;
   gap: 2px;
@@ -708,7 +712,10 @@ h2 {
   box-shadow: 0 10px 40px rgba(25, 27, 24, 0.2);
 }
 .modal-sm { max-width: 420px; }
-.modal-lg { max-width: 720px; }
+.modal-lg {
+  max-width: 1100px !important; 
+  width: 95% !important;
+}
 .modal h3 { margin: 0 0 12px; font-size: 16px; font-weight: 700; }
 .modal p { margin: 0 0 12px; color: var(--muted); line-height: 1.5; font-size: 13px; }
 .modal label {
@@ -720,7 +727,7 @@ h2 {
   text-transform: uppercase;
   letter-spacing: 1px;
 }
-.modal input,
+.modal input:not(.di-day):not(.di-month):not(.di-year):not(.ss-search input):not(.text-input):not(.ni input),
 .modal select {
   width: 100%;
   padding: 10px 12px;
@@ -943,7 +950,6 @@ h2 {
 
 .ss-popover {
   position: absolute;
-  top: calc(100% + 6px);
   left: 0;
   right: 0;
   z-index: 80;
@@ -988,11 +994,6 @@ h2 {
 }
 .ss-option:hover,
 .ss-option.highlight { background: var(--paper); }
-.ss-option.selected { font-weight: 700; }
-.ss-option.selected::before {
-  content: '✓ ';
-  color: var(--lime-deep);
-}
 .ss-empty {
   padding: 12px;
   text-align: center;
@@ -1569,4 +1570,225 @@ h2 {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ============================================================
+   ФОРМА МОДАЛКИ (расход/доход)
+   ============================================================ */
+.modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.modal-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.modal-field > label {
+  display: block;
+  margin: 0;
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--ink);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  opacity: 0.85;
+}
+
+/* TextInput — в стиле остальных полей */
+.text-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 13px;
+  background: white;
+  color: var(--ink);
+  transition: 120ms ease;
+  box-sizing: border-box;
+}
+.text-input:hover { border-color: var(--ink); }
+.text-input:focus {
+  outline: none;
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px rgba(25, 27, 24, 0.08);
+}
+.text-input::placeholder {
+  color: var(--muted);
+  opacity: 0.55;
+}
+
+/* ============================================================
+   ПЕРИОД (PeriodPicker)
+   ============================================================ */
+.period-tabs {
+  display: flex;
+  padding: 4px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin-bottom: 20px;
+  gap: 2px;
+}
+
+.period-tabs button {
+  flex: 1;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  transition: 150ms ease;
+}
+
+.period-tabs button:hover {
+  color: var(--ink);
+  background: rgba(25, 27, 24, 0.04);
+}
+
+.period-tabs button.on {
+  background: var(--ink);
+  color: white;
+  box-shadow: 0 2px 8px rgba(25, 27, 24, 0.15);
+}
+
+/* Сетка месяцев */
+.period-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.period-grid button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 0;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+  transition: 150ms ease;
+}
+
+.period-grid button:hover {
+  border-color: var(--ink);
+  background: var(--paper);
+}
+
+.period-grid button.on {
+  background: var(--lime);
+  border-color: var(--lime-deep);
+  color: var(--ink);
+  font-weight: 800;
+}
+
+/* Диапазон (С ... По ...) */
+.period-range {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.period-range > div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.period-range label {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: var(--muted);
+  letter-spacing: 0.5px;
+}
+
+.period-range select {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 13px;
+  font-family: inherit;
+  background: white;
+  color: var(--ink);
+  cursor: pointer;
+  transition: 150ms ease;
+}
+
+.period-range select:focus {
+  outline: none;
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px rgba(25, 27, 24, 0.08);
+}
+
+/* Подсказка для "Всё время" */
+.period-hint {
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  background: var(--paper);
+  border-radius: 12px;
+  border: 1px dashed var(--line);
+  margin: 0;
+}
+
+/* ============================================================
+   FLIP CARD (Карточка баланса по наведению)
+   ============================================================ */
+.flip-container {
+  perspective: 1000px;
+  cursor: default;
+  min-height: 176px; /* Высота как у остальных карточек */
+  display: flex;
+}
+
+.flip-card-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  transform-style: preserve-3d;
+}
+
+/* Переворот при наведении */
+.flip-container:hover .flip-card-inner {
+  transform: rotateY(180deg);
+}
+
+.flip-front, .flip-back {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  border-radius: var(--radius-md) var(--radius-md) var(--radius-md) 7px;
+  padding: 25px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+/* Лицевая сторона (наследует стили balance-card) */
+.flip-front {
+  background: var(--ink);
+  color: white;
+}
+
+/* Обратная сторона */
+.flip-back {
+  background: #2a2d24; /* Чуть светлее черного для контраста */
+  color: white;
+  transform: rotateY(180deg);
+  border: 1px solid rgba(255,255,255,0.1);
 }

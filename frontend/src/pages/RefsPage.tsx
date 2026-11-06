@@ -3,7 +3,7 @@ import { api, Category, Subcategory } from '@/api'
 import { Icon } from '@/icons'
 import { ConfirmModal, PromptModal } from '@/ui/Modal'
 import { useToast } from '@/ui/Toast'
-import { ExportImport } from '@/ui/ExportMenu'
+import { ExportImport } from '@/ui/ExportImport'
 
 type PromptState =
   | { kind: 'addCat' }
