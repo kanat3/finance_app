@@ -5,7 +5,8 @@ export type IconName =
   | 'bell' | 'chevron' | 'arrowUp' | 'arrowDown'
   | 'plus' | 'bag' | 'taxi' | 'homeSmall' | 'coffee' | 'more'
   | 'edit' | 'trash' | 'download' | 'upload' | 'save' | 'x' | 'calendar'
-  | 'search' | 'help' | 'filter' | 'sparkles'
+  | 'search' | 'help' | 'filter' | 'sparkles' | 'piggyBank' | 'trendingUp' 
+  | 'wallet' | 'history'
 
 export function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
   const paths: Record<IconName, React.ReactNode> = {
@@ -51,7 +52,34 @@ export function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
       <path d="M3 5h4" />
       <path d="M17 19h4" />
     </>
-  )
+  ),
+  piggyBank: (
+    <>
+      <path d="M19 5c-1.5 0-2.8 1.4-3 2-3.5-1.5-11-.3-11 5 0 1.8 0 3 2 4.5V20h4v-2h3v2h4v-4c1-.5 1.7-1 2-2h2v-4h-2c0-1-.5-1.5-1-2V5z" />
+      <path d="M2 9v1c0 1.1.9 2 2 2h1" />
+      <path d="M16 11h.01" />
+    </>
+  ),
+  trendingUp: (
+    <>
+      <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" />
+      <polyline points="16 7 22 7 22 13" />
+    </>
+  ),
+  wallet: (
+    <>
+      <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" />
+      <path d="M3 5v14a2 2 0 0 0 2 2h16v-5" />
+      <path d="M18 12a2 2 0 0 0 0 4h4v-4Z" />
+    </>
+  ),
+  history: (
+  <>
+    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+    <path d="M3 3v5h5" />
+    <path d="M12 7v5l4 2" />
+  </>
+  ),
   }
 
   return (

@@ -1409,6 +1409,184 @@ def spa(path):
         return send_from_directory(FRONTEND_DIST, "index.html")
     abort(404)
 
+# ============================================================
+# DEPOSITS (Вклады)
+# ============================================================
+@app.get("/api/deposits")
+def list_deposits():
+    today = datetime.now().date()
+    active_deposits = q("SELECT * FROM deposits WHERE is_active = TRUE AND auto_accrue = TRUE")
+
+    for d in active_deposits:
+        last_int = q("SELECT MAX(date) as last_date FROM deposit_interests WHERE deposit_id = %s", (d["id"],), fetch="one")
+        last_date = last_int["last_date"] if last_int and last_int["last_date"] else d["start_date"]
+
+        period = d.get("accrue_period", "monthly")
+        days_passed = (today - last_date).days
+
+        should_accrue = False
+        if period == 'daily' and days_passed >= 1:
+            should_accrue = True
+        elif period == 'monthly' and days_passed >= 30:
+            should_accrue = True
+        elif period == 'end':
+            if d.get("end_date") and today >= d["end_date"]:
+                should_accrue = True
+                if last_int and last_int["last_date"] == today:
+                    should_accrue = False
+
+        if should_accrue:
+            if period == 'daily':
+                amount = float(d["amount"]) * (float(d["rate"]) / 100) / 365
+            elif period == 'monthly':
+                amount = float(d["amount"]) * (float(d["rate"]) / 100) / 12
+            else:
+                if d.get("end_date"):
+                    days = (d["end_date"] - d["start_date"]).days
+                    amount = float(d["amount"]) * (float(d["rate"]) / 100) * (days / 365)
+                else:
+                    amount = float(d["amount"]) * (float(d["rate"]) / 100) / 12
+
+            q("INSERT INTO deposit_interests(deposit_id, date, amount, paid_out) VALUES(%s, %s, %s, TRUE)",
+              (d["id"], today, amount))
+
+            cat = q("SELECT id FROM income_categories WHERE name='Проценты по вкладам'", fetch="one")
+            cid = cat["id"] if cat else None
+            q("INSERT INTO incomes(date, category_id, description, amount) VALUES(%s, %s, %s, %s)",
+              (today, cid, f'Автоначисление по вкладу "{d["name"]}"', amount))
+
+            if d.get("is_capitalized"):
+                q("UPDATE deposits SET amount = amount + %s WHERE id = %s", (amount, d["id"]))
+
+    rows = q("SELECT * FROM deposits ORDER BY is_active DESC, created_at DESC")
+    return jsonify(ser(rows))
+
+@app.get("/api/deposits/<int:did>/interests")
+def list_deposit_interests(did):
+    # LEFT JOIN нужен, чтобы проверить, существует ли еще доход
+    rows = q("""
+        SELECT di.*, i.id AS linked_income_id
+        FROM deposit_interests di
+        LEFT JOIN incomes i ON i.id = di.income_id
+        WHERE di.deposit_id = %s
+        ORDER BY di.date DESC
+    """, (did,))
+    return jsonify(ser(rows))
+
+@app.post("/api/deposits")
+def create_deposit():
+    d = request.get_json(force=True)
+    row = q(
+        "INSERT INTO deposits(name, bank, amount, rate, start_date, end_date, accrue_period, is_capitalized, auto_accrue, income_category_id) "
+        "VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        (d['name'], d.get('bank'), d['amount'], d['rate'], d['start_date'],
+         d.get('end_date'), d.get('accrue_period', 'monthly'), d.get('is_capitalized', False),
+         d.get('auto_accrue', False), d.get('income_category_id')),
+        fetch="one"
+    )
+    return jsonify({"id": row["id"]}), 201
+
+@app.delete("/api/deposits/<int:did>")
+def delete_deposit(did):
+    # 1. Удаляем доходы, привязанные к этому вкладу (через deposit_interests)
+    q("DELETE FROM incomes WHERE id IN (SELECT income_id FROM deposit_interests WHERE deposit_id = %s)", (did,))
+    
+    # 2. Удаляем сам вклад (история удалится каскадно)
+    q("DELETE FROM deposits WHERE id=%s", (did,))
+    
+    return jsonify({"ok": True})
+
+@app.put("/api/deposits/<int:did>")
+def update_deposit(did):
+    d = request.get_json(force=True)
+
+    fields = []
+    params = []
+
+    allowed_fields = [
+        'name', 'bank', 'amount', 'rate', 'start_date', 'end_date',
+        'accrue_period', 'is_capitalized', 'auto_accrue', 'income_category_id'
+    ]
+
+    for field in allowed_fields:
+        if field in d:
+            fields.append(f"{field} = %s")
+            params.append(d[field])
+
+    if not fields:
+        return jsonify({"ok": True})
+
+    params.append(did)
+    sql = f"UPDATE deposits SET {', '.join(fields)} WHERE id = %s"
+    q(sql, params)
+
+    return jsonify({"ok": True})
+
+@app.post("/api/deposits/<int:did>/accrue")
+def accrue_interest(did):
+    d = request.get_json(force=True)
+    amount = float(d.get('amount', 0))
+    if amount <= 0:
+        abort(400, "Сумма должна быть больше нуля")
+
+    dep = q("SELECT * FROM deposits WHERE id=%s", (did,), fetch="one")
+    if not dep:
+        abort(404, "Вклад не найден")
+
+    cid = dep.get("income_category_id")
+    if not cid:
+        abort(400, "У вклада не выбрана категория дохода")
+
+    # 1. Создаем доход и получаем его ID
+    income_row = q(
+        "INSERT INTO incomes(date, category_id, description, amount) "
+        "VALUES(CURRENT_DATE, %s, %s, %s) RETURNING id",
+        (cid, f'Проценты по вкладу "{dep["name"]}"', amount),
+        fetch="one"
+    )
+    income_id = income_row["id"]
+
+    # 2. Записываем в историю с привязкой к доходу
+    q("INSERT INTO deposit_interests(deposit_id, date, amount, paid_out, income_id) "
+      "VALUES(%s, CURRENT_DATE, %s, TRUE, %s)",
+      (did, amount, income_id))
+
+    # 3. Капитализация
+    if dep.get("is_capitalized"):
+        q("UPDATE deposits SET amount = amount + %s WHERE id = %s", (amount, did))
+
+    return jsonify({"ok": True})
+
+# ============================================================
+# INVESTMENTS (Акции)
+# ============================================================
+@app.get("/api/investments")
+def list_investments():
+    rows = q("SELECT * FROM investments ORDER BY name")
+    return jsonify(ser(rows))
+
+@app.post("/api/investments")
+def create_investment():
+    d = request.get_json(force=True)
+    row = q(
+        "INSERT INTO investments(name, ticker, quantity, avg_price, current_price) "
+        "VALUES(%s, %s, %s, %s, %s) RETURNING id",
+        (d['name'], d.get('ticker'), d['quantity'], d['avg_price'], d.get('current_price', d['avg_price'])),
+        fetch="one"
+    )
+    return jsonify({"id": row["id"]}), 201
+
+@app.put("/api/investments/<int:iid>")
+def update_investment(iid):
+    d = request.get_json(force=True)
+    if 'current_price' in d:
+        q("UPDATE investments SET current_price=%s WHERE id=%s", (d['current_price'], iid))
+    return jsonify({"ok": True})
+
+@app.delete("/api/investments/<int:iid>")
+def delete_investment(iid):
+    q("DELETE FROM investments WHERE id=%s", (iid,))
+    return jsonify({"ok": True})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=3000, debug=True)

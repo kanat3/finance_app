@@ -7,3 +7,5 @@ scikit-learn==1.8.0
 numpy==1.26.4
 flask-sock==0.7.0
 simple-websocket==1.0.0
+celery==5.4.0
+redis==6.1.0

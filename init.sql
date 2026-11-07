@@ -1,3 +1,6 @@
+-- ============================================================
+-- 1. Справочники расходов и доходов
+-- ============================================================
 CREATE TABLE IF NOT EXISTS expense_categories (
     id   SERIAL PRIMARY KEY,
     name VARCHAR(100) UNIQUE NOT NULL
@@ -15,6 +18,9 @@ CREATE TABLE IF NOT EXISTS income_categories (
     name VARCHAR(100) UNIQUE NOT NULL
 );
 
+-- ============================================================
+-- 2. Транзакции (расходы и доходы)
+-- ============================================================
 CREATE TABLE IF NOT EXISTS expenses (
     id             SERIAL PRIMARY KEY,
     date           DATE NOT NULL,
@@ -34,13 +40,68 @@ CREATE TABLE IF NOT EXISTS incomes (
     comment     TEXT
 );
 
+-- ============================================================
+-- 3. Вклады и депозиты
+-- ============================================================
+CREATE TABLE IF NOT EXISTS deposits (
+    id                  SERIAL PRIMARY KEY,
+    name                VARCHAR(100) NOT NULL,
+    bank                VARCHAR(100),
+    amount              NUMERIC(14, 2) NOT NULL,
+    rate                NUMERIC(5, 2) NOT NULL,
+    start_date          DATE NOT NULL,
+    end_date            DATE,
+    accrue_period       VARCHAR(20) DEFAULT 'monthly',  -- 'daily', 'monthly', 'end'
+    is_capitalized      BOOLEAN DEFAULT FALSE,
+    is_active           BOOLEAN DEFAULT TRUE,
+    auto_accrue         BOOLEAN DEFAULT FALSE,
+    income_category_id  INTEGER REFERENCES income_categories(id) ON DELETE SET NULL,
+    created_at          TIMESTAMP DEFAULT NOW()
+);
+
+-- ============================================================
+-- 4. Инвестиции (акции, облигации и т.д.)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS investments (
+    id              SERIAL PRIMARY KEY,
+    name            VARCHAR(100) NOT NULL,
+    ticker          VARCHAR(10),
+    quantity        NUMERIC(14, 4) NOT NULL,
+    avg_price       NUMERIC(14, 2) NOT NULL,
+    current_price   NUMERIC(14, 2),
+    created_at      TIMESTAMP DEFAULT NOW()
+);
+
+-- ============================================================
+-- 5. История начислений процентов по вкладам
+-- ============================================================
+CREATE TABLE IF NOT EXISTS deposit_interests (
+    id              SERIAL PRIMARY KEY,
+    deposit_id      INTEGER REFERENCES deposits(id) ON DELETE CASCADE,
+    date            DATE NOT NULL,
+    amount          NUMERIC(14, 2) NOT NULL,
+    paid_out        BOOLEAN DEFAULT FALSE
+);
+
+-- ============================================================
+-- 6. Индексы для быстрого поиска
+-- ============================================================
 CREATE INDEX IF NOT EXISTS idx_expenses_date  ON expenses(date);
 CREATE INDEX IF NOT EXISTS idx_expenses_cat   ON expenses(category_id);
 CREATE INDEX IF NOT EXISTS idx_incomes_date   ON incomes(date);
 CREATE INDEX IF NOT EXISTS idx_incomes_cat    ON incomes(category_id);
 
+CREATE INDEX IF NOT EXISTS idx_deposits_active ON deposits(is_active);
+CREATE INDEX IF NOT EXISTS idx_deposit_interests_deposit ON deposit_interests(deposit_id);
+
+-- ============================================================
+-- 7. Защита от дубликатов транзакций
+-- ============================================================
 CREATE UNIQUE INDEX IF NOT EXISTS uq_expenses_natural
     ON expenses(date, category_id, subcategory_id, amount, COALESCE(description,''), COALESCE(comment,''));
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_incomes_natural
     ON incomes(date, category_id, amount, COALESCE(description,''), COALESCE(comment,''));
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_deposit_interest_day 
+ON deposit_interests (deposit_id, date);

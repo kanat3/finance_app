@@ -4,7 +4,7 @@ import {
   Chart, CategoryScale, LinearScale, BarElement, ArcElement, LineElement, PointElement, 
   LineController, BarController, DoughnutController, Title, Tooltip, Legend,
 } from 'chart.js'
-import { api, Stats, MONTHS, fmtMoney, fmtCompact, niceStep, periodMonths, periodLabel } from '@/api'
+import { api, Stats, MONTHS, fmtMoney, fmtCompact, niceStep, periodMonths, periodLabel, Deposit, Investment } from '@/api'
 import { Icon } from '@/icons'
 import { PeriodPicker } from '@/ui/PeriodPicker'
 import { usePeriod } from '@/hooks/usePeriod'
@@ -14,7 +14,6 @@ Chart.register(
   LineController, BarController, DoughnutController, Title, Tooltip, Legend
 )
 
-// Плагин для отрисовки процентов прямо на кольцевой диаграмме
 const doughnutLabelsPlugin = {
   id: 'doughnutLabels',
   afterDatasetsDraw(chart: any) {
@@ -51,11 +50,35 @@ const commonScales = {
 export function HomePage() {
   const [period, setPeriod] = usePeriod()
   const [stats, setStats] = useState<Stats | null>(null)
+  
+  // Новые стейты для сбережений
+  const [deposits, setDeposits] = useState<Deposit[]>([])
+  const [investments, setInvestments] = useState<Investment[]>([])
 
   useEffect(() => {
-    api.stats(periodMonths(period)).then(setStats)
+    // Загружаем всё параллельно
+    Promise.all([
+      api.stats(periodMonths(period)),
+      api.deposits(),
+      api.investments()
+    ]).then(([s, d, i]) => {
+      setStats(s)
+      setDeposits(d)
+      setInvestments(i)
+    }).catch(console.error)
   }, [period])
 
+  // === РАСЧЕТЫ СБЕРЕЖЕНИЙ ===
+  const totalDeposits = useMemo(() => deposits.reduce((sum, d) => sum + d.amount, 0), [deposits])
+  const totalInvestments = useMemo(() => investments.reduce((sum, i) => sum + (i.current_price || i.avg_price) * i.quantity, 0), [investments])
+  const totalCapital = totalDeposits + totalInvestments
+  
+  // Ожидаемый доход в месяц от вкладов
+  const expectedMonthlyIncome = useMemo(() => {
+    return deposits.reduce((sum, d) => sum + (d.amount * (d.rate / 100) / 12), 0)
+  }, [deposits])
+
+  // === ОСТАЛЬНЫЕ РАСЧЕТЫ ===
   const incomeByMonth = useMemo(() => {
     const m = Object.fromEntries((stats?.incomes_by_month ?? []).map((r) => [r.m, r.s]))
     return MONTHS.map((_, i) => m[i + 1] || 0)
@@ -66,7 +89,6 @@ export function HomePage() {
     return MONTHS.map((_, i) => m[i + 1] || 0)
   }, [stats])
 
-  // 1. Считаем накопительный баланс (для линии тренда)
   const cumulativeBalanceByMonth = useMemo(() => {
     let running = 0;
     return MONTHS.map((_, i) => {
@@ -83,7 +105,6 @@ export function HomePage() {
   const balance = totalIncome - totalExpense
   const savingsRate = totalIncome > 0 ? Math.round((balance / totalIncome) * 100) : 0
 
-  // === Расчеты для средних показателей ===
   const activeMonthsCount = useMemo(() => {
     if (period.kind === 'month') return 1;
     const count = MONTHS.filter((_, i) => incomeByMonth[i] > 0 || expenseByMonth[i] > 0).length;
@@ -100,7 +121,6 @@ export function HomePage() {
   }, [stats]);
 
   const avgSalary = salaryCategory ? (salaryCategory.s / activeMonthsCount) : 0;
-  // =====================================
 
   const yExp = useMemo(() => {
     const max = Math.max(...expenseByMonth, ...incomeByMonth, 1)
@@ -136,7 +156,7 @@ export function HomePage() {
     dynamicDatasets.push({
       type: 'line',
       label: 'Баланс (накопительный)',
-      data: cumulativeBalanceByMonth, // <-- Используем новый массив
+      data: cumulativeBalanceByMonth,
       borderColor: '#777b73',
       borderWidth: 1.5,
       pointBackgroundColor: '#fff',
@@ -162,10 +182,9 @@ export function HomePage() {
       </section>
 
       <section className="summary-grid">
-        {/* Карточка баланса с переворотом по наведению */}
+        {/* Карточка баланса с переворотом */}
         <div className="flip-container">
           <div className="flip-card-inner">
-            {/* ЛИЦЕВАЯ СТОРОНА */}
             <div className="flip-front">
               <div>
                 <div className="summary-top">
@@ -184,7 +203,6 @@ export function HomePage() {
               </div>
             </div>
 
-            {/* ОБРАТНАЯ СТОРОНА (Средние показатели) */}
             <div className="flip-back">
               <div style={{ marginBottom: 8 }}>
                 <span className="summary-label" style={{ color: 'var(--lime)', fontSize: '10px' }}>Средние показатели / мес</span>
@@ -235,6 +253,44 @@ export function HomePage() {
             <span className="sparkle">✦</span>
             <strong>{balance >= 0 ? 'Так держать!' : 'Стоит поберечься'}</strong>
             <p>{balance >= 0 ? <>Вы в плюсе на <b>{fmtMoney(balance)}</b></> : <>Расходы превышают доходы на <b>{fmtMoney(-balance)}</b></>}</p>
+          </div>
+        </article>
+      </section>
+
+      {/* ============================================================ */}
+      {/* НОВЫЙ БЛОК: СБЕРЕЖЕНИЯ */}
+      {/* ============================================================ */}
+      <section className="summary-grid" style={{ gridTemplateColumns: '1.1fr 1fr 1fr', marginBottom: 18 }}>
+        <article className="summary-card" style={{ background: 'var(--ink)', color: 'white', border: 'none' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, width: '100%' }}>
+            <div className="summary-icon income" style={{ background: 'rgba(201, 243, 108, 0.2)', color: 'var(--lime)' }}>
+              <Icon name="wallet" size={21} />
+            </div>
+            <div className="summary-data">
+              <span className="summary-label" style={{ color: 'rgba(255,255,255,0.6)' }}>Общий капитал</span>
+              <strong className="summary-value" style={{ color: 'white' }}>{fmtMoney(totalCapital)}</strong>
+            </div>
+          </div>
+        </article>
+
+        <article className="summary-card">
+          <div className="summary-icon income" style={{ background: 'rgba(162, 141, 232, 0.18)', color: '#7b61c9' }}>
+            <Icon name="trendingUp" size={21} />
+          </div>
+          <div className="summary-data">
+            <span className="summary-label">Портфель</span>
+            <strong className="summary-value">{fmtMoney(totalInvestments)}</strong>
+          </div>
+        </article>
+
+        <article className="summary-card">
+          <div className="summary-icon income">
+            <Icon name="piggyBank" size={21} />
+          </div>
+          <div className="summary-data">
+            <span className="summary-label">Пассивный доход</span>
+            <strong className="summary-value" style={{ color: 'var(--lime-deep)' }}>+{fmtMoney(expectedMonthlyIncome)}</strong>
+            <span className="muted-caption" style={{ color: 'var(--muted)', marginTop: 2, display: 'block' }}>в месяц с вкладов</span>
           </div>
         </article>
       </section>

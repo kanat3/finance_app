@@ -1,5 +1,6 @@
 import { ImportPreviewModal, ImportRow } from '@/ui/ImportPreviewModal'
 
+
 export const MONTHS = [
   'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
   'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь',
@@ -306,6 +307,67 @@ export const api = {
   exportUrl: (kind: 'expenses' | 'incomes' | 'refs', fmt: 'csv' | 'xlsx') =>
     `/api/export/${kind}.${fmt}`,
   backupUrl: () => '/api/backup',
+
+  deposits: async (): Promise<Deposit[]> => {
+    const res = await fetch('/api/deposits');
+    return res.json();
+  },
+  createDeposit: async (data: Omit<Deposit, 'id' | 'is_active'>): Promise<{ id: number }> => {
+    const res = await fetch('/api/deposits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('Ошибка создания вклада');
+    return res.json();
+  },
+  updateDeposit: async (id: number, data: Partial<Deposit>): Promise<void> => {
+    const res = await fetch(`/api/deposits/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('Ошибка обновления вклада');
+  },
+  deleteDeposit: async (id: number): Promise<void> => {
+    await fetch(`/api/deposits/${id}`, { method: 'DELETE' });
+  },
+  accrueInterest: async (depositId: number, amount: number): Promise<void> => {
+    const res = await fetch(`/api/deposits/${depositId}/accrue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount }),
+    });
+    if (!res.ok) throw new Error('Ошибка начисления процентов');
+  },
+  depositInterests: async (id: number): Promise<DepositInterest[]> => {
+    const res = await fetch(`/api/deposits/${id}/interests`);
+    return res.json();
+  },
+  investments: async (): Promise<Investment[]> => {
+    const res = await fetch('/api/investments');
+    return res.json();
+  },
+  createInvestment: async (data: Omit<Investment, 'id'>): Promise<{ id: number }> => {
+    const res = await fetch('/api/investments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error('Ошибка создания акции');
+    return res.json();
+  },
+  updateInvestment: async (id: number, data: Partial<Investment>): Promise<void> => {
+    await fetch(`/api/investments/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+  },
+  deleteInvestment: async (id: number): Promise<void> => {
+    await fetch(`/api/investments/${id}`, { method: 'DELETE' });
+  },
+
 }
 
 export const fmtMoney = (n: number) =>
@@ -335,4 +397,37 @@ export function niceStep(max: number): number {
   else if (norm <= 5) mult = 5
   else mult = 10
   return mult * base
+}
+
+export type Deposit = {
+  id: number;
+  name: string;
+  bank: string | null;
+  amount: number;
+  rate: number;
+  start_date: string;
+  end_date: string | null;
+  accrue_period: 'daily' | 'monthly' | 'end';
+  is_capitalized: boolean;
+  is_active: boolean;
+  auto_accrue: boolean;
+  income_category_id: number | null;
+}
+
+export type DepositInterest = {
+  id: number;
+  deposit_id: number;
+  date: string;
+  amount: number;
+  paid_out: boolean;
+  linked_income_id: number | null;
+}
+
+export type Investment = {
+  id: number;
+  name: string;
+  ticker: string | null;
+  quantity: number;
+  avg_price: number;
+  current_price: number | null;
 }

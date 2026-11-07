@@ -7,13 +7,17 @@ import { ExpensesPage } from '@/pages/ExpensesPage'
 import { IncomesPage } from '@/pages/IncomesPage'
 import { RefsPage } from '@/pages/RefsPage'
 import { api } from '@/api'
+import { SavingsPage } from '@/pages/SavingsPage'
 
-type Page = 'Главная' | 'Расходы' | 'Доходы' | 'Справочники'
+// 1. Добавляем 'Сбережения' в тип Page
+type Page = 'Главная' | 'Расходы' | 'Доходы' | 'Сбережения' | 'Справочники'
 
+// 2. Добавляем кнопку в массив навигации
 const NAV: { label: Page; icon: IconName }[] = [
   { label: 'Главная', icon: 'home' },
   { label: 'Расходы', icon: 'expense' },
   { label: 'Доходы', icon: 'income' },
+  { label: 'Сбережения', icon: 'piggyBank' }, // <-- Новая вкладка
   { label: 'Справочники', icon: 'book' },
 ]
 
@@ -97,6 +101,7 @@ function Shell() {
         {page === 'Главная' && <HomePage monthIndex={monthIndex} setMonthIndex={setMonthIndex} />}
         {page === 'Расходы' && <ExpensesPage />}
         {page === 'Доходы' && <IncomesPage />}
+        {page === 'Сбережения' && <SavingsPage />} {/* <-- Рендерим страницу */}
         {page === 'Справочники' && <RefsPage />}
       </main>
     </div>
