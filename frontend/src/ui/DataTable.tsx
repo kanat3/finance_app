@@ -72,8 +72,8 @@ export function DataTable<T extends { id: number }>({
       <div className="data-summary">
         <span className="summary-found">
           {activeFilters > 0
-            ? <>Найдено <b>{total}</b> · Сумма <b>{fmtMoney(totalAmount)}</b></>
-            : <>Всего <b>{total}</b> · Сумма <b>{fmtMoney(totalAmount)}</b></>}
+            ? <>Найдено <b>{total}</b></>
+            : <>Всего <b>{total}</b></>}
         </span>
         {hasFilters && (
           <button

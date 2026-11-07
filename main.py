@@ -3,6 +3,8 @@ import csv
 import os
 import time
 import re
+import sys
+import json
 import tempfile
 import subprocess
 from datetime import date, datetime
@@ -16,15 +18,21 @@ from flask import (
     Flask, jsonify, request, abort,
     send_file, send_from_directory,
 )
+from flask_sock import Sock
 
 from openpyxl import load_workbook, Workbook
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.join(BASE_DIR, 'ml'))
+from SmartCategorizer import SmartCategorizer
 
 # ============================================================
 # CONFIG
 # ============================================================
 FRONTEND_DIST = os.environ.get("FRONTEND_DIST", "/app/frontend_dist")
 
+MODEL_PATH = os.path.join(os.path.dirname(__file__), 'models', 'categorizer_model.pkl')
+categorizer = SmartCategorizer(model_path=MODEL_PATH)
 
 # ============================================================
 # SEED (встроен)
@@ -235,6 +243,32 @@ _run_seed()
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024
 
+# ============================================================
+# WEBSOCKET SETUP
+# ============================================================
+sock = Sock(app)
+WS_CLIENTS = set()
+
+@sock.route('/api/ws')
+def ws_endpoint(ws):
+    WS_CLIENTS.add(ws)
+    try:
+        while True:
+            ws.receive()  # Ждем сообщений, чтобы держать соединение
+    except Exception:
+        pass
+    finally:
+        WS_CLIENTS.discard(ws)
+
+def notify_clients(kind: str):
+    """Отправляет уведомление всем подключенным клиентам."""
+    message = json.dumps({"event": "update", "kind": kind})
+    for client in list(WS_CLIENTS):
+        try:
+            client.send(message)
+        except Exception:
+            WS_CLIENTS.discard(client)
+
 
 # ---------------- CORS ----------------
 @app.after_request
@@ -316,11 +350,9 @@ def _parse_float(v, default=None):
 
 
 def _like(v: str) -> str:
-    """Экранирует % и _ для ILIKE."""
     return "%" + v.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
 
 def _escape_like(v: str) -> str:
-    """Экранирует %, _ и \\ для использования в ILIKE ... ESCAPE '\\'."""
     return (
         v.replace("\\", "\\\\")
          .replace("%", "\\%")
@@ -329,16 +361,6 @@ def _escape_like(v: str) -> str:
 
 def _apply_date_filter(where: list, p: list, expr: str,
                        date_from: str, date_to: str, date_eq: str = ""):
-    """Умная фильтрация по дате.
-
-    Приоритет:
-      1) date_eq (одиночный день)      → date = ...
-      2) from и to                     → BETWEEN / диапазон
-      3) только from (без to)          → ТОЧНОЕ совпадение date = from
-                                          (или >= from, если from неполное: месяц/год)
-      4) только to (без from)          → date <= to
-      5) оба пусты                     → без фильтра
-    """
     def expand(v: str, is_end: bool):
         v = v.strip()
         if not v:
@@ -370,7 +392,6 @@ def _apply_date_filter(where: list, p: list, expr: str,
     end = expand(date_to, is_end=True) if date_to else None
 
     if start and end:
-        # полноценный диапазон
         if start[0] == "eq":
             where.append(f"{expr} >= %s"); p.append(start[1])
         else:
@@ -382,7 +403,6 @@ def _apply_date_filter(where: list, p: list, expr: str,
         return
 
     if start and not end:
-        # только «От» — ТОЧНОЕ совпадение, если дата полная
         if start[0] == "eq":
             where.append(f"{expr} = %s"); p.append(start[1])
         else:
@@ -390,7 +410,6 @@ def _apply_date_filter(where: list, p: list, expr: str,
         return
 
     if end and not start:
-        # только «До»
         if end[0] == "lt":
             where.append(f"{expr} < %s"); p.append(end[1])
         else:
@@ -400,11 +419,6 @@ def _apply_date_filter(where: list, p: list, expr: str,
 
 def _apply_amount_filter(where: list, p: list, expr: str,
                          amount_min, amount_max, amount_eq):
-    """Точная фильтрация по сумме.
-
-    Если задано точное значение — `amount = X`.
-    Иначе — диапазон `>= / <=`.
-    """
     if amount_eq is not None:
         where.append(f"{expr} = %s")
         p.append(amount_eq)
@@ -416,7 +430,6 @@ def _apply_amount_filter(where: list, p: list, expr: str,
         where.append(f"{expr} <= %s")
         p.append(amount_max)
 
-# Разрешённые поля сортировки для каждого ресурса.
 EXPENSE_SORTS = {
     "date": "e.date",
     "category": "ec.name",
@@ -435,10 +448,6 @@ INCOME_SORTS = {
 
 
 def _apply_sort(sorts_allowed: dict, default: str = "date"):
-    """Возвращает SQL-фрагмент ORDER BY из query-параметра sort=field:dir,field2:dir2.
-
-    Пример: ?sort=amount:desc,date:asc
-    """
     raw = request.args.get("sort", "").strip()
     if not raw:
         return f" ORDER BY {sorts_allowed[default]} DESC"
@@ -463,7 +472,6 @@ def _apply_sort(sorts_allowed: dict, default: str = "date"):
 
 
 def _apply_pagination():
-    """Возвращает (limit, offset, page, page_size) из query ?page=1&page_size=50."""
     page = _parse_int(request.args.get("page"), 1) or 1
     if page < 1:
         page = 1
@@ -485,7 +493,6 @@ def list_expenses():
         where.append("EXTRACT(MONTH FROM e.date) = ANY(%s)")
         p.append(months)
 
-    # ── категория / подкатегория ──
     cat_id = _parse_int(request.args.get("category_id"))
     cat_name = request.args.get("category", "").strip()
     if cat_id:
@@ -500,7 +507,6 @@ def list_expenses():
     elif sub_name:
         where.append("es.name = %s"); p.append(sub_name)
 
-    # ── описание / комментарий (contains) ──
     desc = request.args.get("description", "").strip()
     if desc:
         where.append("e.description ILIKE %s ESCAPE '\\'")
@@ -511,7 +517,6 @@ def list_expenses():
         where.append("COALESCE(e.comment,'') ILIKE %s ESCAPE '\\'")
         p.append("%" + _escape_like(comment) + "%")
 
-    # ── дата (умно) ──
     _apply_date_filter(
         where, p, "e.date",
         date_from=request.args.get("date_from", "").strip(),
@@ -519,7 +524,6 @@ def list_expenses():
         date_eq=request.args.get("date", "").strip(),
     )
 
-    # ── сумма (умно) ──
     _apply_amount_filter(
         where, p, "e.amount",
         amount_min=_parse_float(request.args.get("amount_min")),
@@ -527,7 +531,6 @@ def list_expenses():
         amount_eq=_parse_float(request.args.get("amount")),
     )
 
-    # ── quick search ──
     search = request.args.get("search", "").strip()
     if search:
         like = "%" + _escape_like(search) + "%"
@@ -672,6 +675,7 @@ def create_expense():
          d.get("description"), d["amount"], d.get("comment")),
         fetch="one",
     )
+    notify_clients('expenses')
     return jsonify({"id": row["id"]}), 201
 
 
@@ -684,12 +688,14 @@ def update_expense(eid):
         (d["date"], d.get("category_id"), d.get("subcategory_id"),
          d.get("description"), d["amount"], d.get("comment"), eid),
     )
+    notify_clients('expenses')
     return jsonify({"ok": True})
 
 
 @app.delete("/api/expenses/<int:eid>")
 def delete_expense(eid):
     q("DELETE FROM expenses WHERE id=%s", (eid,))
+    notify_clients('expenses')
     return jsonify({"ok": True})
 
 @app.post("/api/incomes")
@@ -702,6 +708,7 @@ def create_income():
          d["amount"], d.get("comment")),
         fetch="one",
     )
+    notify_clients('incomes')
     return jsonify({"id": row["id"]}), 201
 
 
@@ -714,12 +721,14 @@ def update_income(iid):
         (d["date"], d.get("category_id"), d.get("description"),
          d["amount"], d.get("comment"), iid),
     )
+    notify_clients('incomes')
     return jsonify({"ok": True})
 
 
 @app.delete("/api/incomes/<int:iid>")
 def delete_income(iid):
     q("DELETE FROM incomes WHERE id=%s", (iid,))
+    notify_clients('incomes')
     return jsonify({"ok": True})
 
 
@@ -905,7 +914,7 @@ def stats():
 # ============================================================
 def _csv_response(rows, fieldnames, filename):
     buf = io.StringIO()
-    buf.write("\ufeff")  # BOM для Excel
+    buf.write("\ufeff")
     w = csv.DictWriter(
         buf, fieldnames=fieldnames,
         delimiter=";", quoting=csv.QUOTE_MINIMAL,
@@ -943,7 +952,6 @@ def _xlsx_response(headers, rows, filename):
 
 
 def _export_data(kind):
-    """kind: expenses|incomes|refs"""
     if kind == "expenses":
         rows = q("""
             SELECT e.id, e.date, ec.name AS category, es.name AS subcategory,
@@ -978,7 +986,7 @@ def _export_data(kind):
             ("comment", "Комментарий"),
         ]
         filename = "incomes"
-    else:  # refs
+    else:
         cats = q("""
             SELECT ec.name AS category, es.name AS subcategory
             FROM expense_categories ec
@@ -1036,7 +1044,6 @@ def _parse_amount(s):
 
 
 def _human_error(exc: Exception) -> str:
-    """Человеческое описание ошибки импорта."""
     if isinstance(exc, ValueError):
         return str(exc)
     if isinstance(exc, errors.UniqueViolation):
@@ -1054,11 +1061,10 @@ def _human_error(exc: Exception) -> str:
     return f"Ошибка: {exc.__class__.__name__}"
 
 # ============================================================
-# IMPORT: PREVIEW & COMMIT (с поддержкой редактирования на фронте)
+# IMPORT: PREVIEW & COMMIT
 # ============================================================
 
 def _aliases_import() -> dict:
-    """Маппинг русских заголовков из банковских выписок и нашего экспорта."""
     return {
         "дата": "date",
         "date": "date",
@@ -1078,7 +1084,6 @@ def _aliases_import() -> dict:
 
 
 def _parse_import_file(file_storage):
-    """Читает CSV/TXT/XLSX и возвращает список словарей с нормализованными ключами."""
     filename = file_storage.filename.lower()
     raw = file_storage.read()
 
@@ -1098,9 +1103,6 @@ def _parse_import_file(file_storage):
                     break
                 key = headers[i]
 
-                # --- ИСПРАВЛЕНИЕ ДЛЯ EXCEL ---
-                # Если значение — строка, но выглядит как число с запятой ("424,79")
-                # или числом с пробелами ("1 234,50"), конвертируем в float
                 if isinstance(val, str):
                     clean_val = val.strip().replace(" ", "").replace(",", ".")
                     try:
@@ -1127,43 +1129,37 @@ def _parse_import_file(file_storage):
     elif "\t" in first_line:
         delim = "\t"
     else:
-        delim = ","  # Крайний случай, если файл действительно с запятыми (и без десятичных)
+        delim = ","
 
     reader = csv.DictReader(io.StringIO(text), delimiter=delim)
     return list(reader)
 
 @app.post("/api/import/preview")
 def import_preview():
-    """Парсит файл и возвращает JSON для редактирования. НЕ СОХРАНЯЕТ в БД."""
     if "file" not in request.files:
         abort(400, "Файл не передан")
-    
+
     file = request.files["file"]
     filename = file.filename.lower()
     raw_bytes = file.read()
-    
-    # --- ПРОВЕРКА РАЗДЕЛИТЕЛЯ ---
+
     warning_msg = None
     if not filename.endswith(('.xlsx', '.xls')):
         try:
-            # Пробуем прочитать текст для анализа
             try:
                 text_sample = raw_bytes.decode("utf-8-sig")
             except UnicodeDecodeError:
                 text_sample = raw_bytes.decode("cp1251")
-            
+
             first_line = text_sample.split('\n')[0] if text_sample else ""
-            # Если запятых больше чем точек с запятой, это явно CSV с запятыми
             if first_line.count(',') > first_line.count(';'):
                 warning_msg = "Внимание: ваш файл похож на CSV с разделителем-запятой. Если в суммах тоже есть запятые (например, 424,79), данные могли «съехать» по колонкам. Пожалуйста, проверьте таблицу ниже."
         except Exception as e:
             print("Ошибка при проверке разделителя:", e)
-    # ----------------------------
 
-    # Создаем file-like объект для повторного чтения
     import io
     file_stream = io.BytesIO(raw_bytes)
-    file_stream.filename = file.filename # type: ignore
+    file_stream.filename = file.filename  # type: ignore
 
     try:
         raw_rows = _parse_import_file(file_stream)
@@ -1174,7 +1170,7 @@ def import_preview():
     result = []
 
     for i, row in enumerate(raw_rows, 2):
-        row2 = {aliases.get(str(k).strip().lower(), str(k).strip().lower()): v 
+        row2 = {aliases.get(str(k).strip().lower(), str(k).strip().lower()): v
                 for k, v in row.items() if k}
 
         if not row2.get("date") or not row2.get("category"):
@@ -1192,7 +1188,7 @@ def import_preview():
 
         raw_amount = row2.get("amount")
         amount_str = str(raw_amount).replace(" ", "").replace(",", ".") if raw_amount is not None else "0"
-        
+
         try:
             amount = float(amount_str)
         except:
@@ -1215,10 +1211,9 @@ def import_preview():
 
 @app.post("/api/import/commit")
 def import_commit():
-    """Принимает отредактированный массив строк и сохраняет в БД."""
     data = request.get_json(force=True)
     rows = data.get("rows", [])
-    kind = data.get("kind", "expenses")  # expenses или incomes
+    kind = data.get("kind", "expenses")
 
     if not rows:
         return jsonify({"imported": 0, "errors": ["Нет данных для сохранения"]}), 400
@@ -1230,24 +1225,21 @@ def import_commit():
         with conn.cursor() as cur:
             for i, row in enumerate(rows, 1):
                 try:
-                    # 1. Дата
                     d = _parse_date(row["date"])
 
-                    # 2. Категория
                     cat_name = row.get("category", "").strip()
                     if not cat_name:
                         raise ValueError("не указана категория")
 
                     if kind == "expenses":
-                        # Создаем/находим категорию
                         cur.execute(
                             "INSERT INTO expense_categories(name) VALUES(%s) "
                             "ON CONFLICT(name) DO UPDATE SET name=EXCLUDED.name RETURNING id",
                             (cat_name,),
                         )
-                        cid = cur.fetchone()["id"] if isinstance(cur.fetchone(), dict) else cur.fetchone()[0]
+                        cid_row = cur.fetchone()
+                        cid = cid_row["id"] if isinstance(cid_row, dict) else cid_row[0]
 
-                        # Подкатегория
                         sid = None
                         sub_name = row.get("subcategory", "").strip()
                         if sub_name:
@@ -1265,7 +1257,6 @@ def import_commit():
                         desc = row.get("description", "").strip() or None
                         comm = row.get("comment", "").strip() or None
 
-                        # Проверка на дубликат
                         cur.execute(
                             "SELECT 1 FROM expenses WHERE date=%s AND category_id=%s "
                             "AND COALESCE(subcategory_id,-1)=COALESCE(%s,-1) "
@@ -1274,7 +1265,7 @@ def import_commit():
                             (d, cid, sid, amount, desc, comm),
                         )
                         if cur.fetchone():
-                            continue  # Пропускаем дубликат
+                            continue
 
                         cur.execute(
                             "INSERT INTO expenses(date, category_id, subcategory_id, "
@@ -1282,7 +1273,7 @@ def import_commit():
                             (d, cid, sid, desc, amount, comm),
                         )
 
-                    else:  # incomes
+                    else:
                         cur.execute(
                             "INSERT INTO income_categories(name) VALUES(%s) "
                             "ON CONFLICT(name) DO UPDATE SET name=EXCLUDED.name RETURNING id",
@@ -1315,6 +1306,8 @@ def import_commit():
                     errors_list.append(f"Строка {i}: {_human_error(e)}")
 
             conn.commit()
+            # Отправляем уведомление после успешного коммита
+            notify_clients('expenses' if kind == 'expenses' else 'incomes')
     except Exception:
         conn.rollback()
         raise
@@ -1326,6 +1319,36 @@ def import_commit():
         "errors": errors_list[:30],
         "total_errors": len(errors_list),
     })
+
+@app.post("/api/predict-category")
+def predict_category():
+    data = request.json
+    description = data.get("description", "")
+    if not description:
+        return jsonify({"error": "Empty description"}), 400
+
+    try:
+        cat, subcat, confidence = categorizer.predict(description)
+        return jsonify({
+            "input_text": description,
+            "category": cat,
+            "subcategory": subcat,
+            "confidence": confidence
+        })
+    except Exception as e:
+        print(f"Ошибка ML: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.post("/api/feedback-train")
+def feedback_train():
+    data = request.json
+    desc = data.get("description")
+    cat = data.get("category")
+
+    if desc and cat:
+        with open("feedback_data.csv", "a", encoding="utf-8") as f:
+            f.write(f"{desc};{cat}\n")
+    return jsonify({"ok": True})
 
 # ============================================================
 # BACKUP DB
@@ -1363,10 +1386,6 @@ def backup_db():
     except Exception as e:
         abort(500, str(e))
     finally:
-        # send_file может читать файл ещё в момент ответа — удаление
-        # откладывается, т.к. Flask отдаёт файл потоком. Просто оставляем
-        # его в /tmp, ОС почистит. (Корректнее: after_request, но для
-        # локального инструмента допустимо.)
         pass
 
 @app.get("/")
@@ -1382,7 +1401,6 @@ def root():
 
 @app.get("/<path:path>")
 def spa(path):
-    """SPA-fallback: сначала статика из dist/, иначе index.html."""
     candidate = os.path.join(FRONTEND_DIST, path)
     if path and os.path.isfile(candidate):
         return send_from_directory(FRONTEND_DIST, path)

@@ -28,20 +28,23 @@ type Props = {
   type: 'incomes' | 'expenses';
   categories: { id: number; name: string }[];
   subcategories?: SubcategoryRef[];
+  onPredictRow?: (rowId: string, description: string) => Promise<{ category: string, subcategory: string } | null>;
 }
 
-export function ImportPreviewModal({ 
-  open, rows: initialRows, warning, onClose, onSave, type, categories, subcategories = [] 
+export function ImportPreviewModal({
+  open, rows: initialRows, warning, onClose, onSave, type, categories, subcategories = [], onPredictRow
 }: Props) {
   const [rows, setRows] = useState<ImportRow[]>([])
   const [page, setPage] = useState(1)
   const [saving, setSaving] = useState(false)
+  const [isAutoMode, setIsAutoMode] = useState(false)
   const pageSize = 10
 
   useEffect(() => {
     if (open) {
       setRows(initialRows)
       setPage(1)
+      setIsAutoMode(false)
     }
   }, [open, initialRows])
 
@@ -60,6 +63,28 @@ export function ImportPreviewModal({
     if (visibleRows.length === 1 && page > 1) setPage(page - 1)
   }
 
+  const handleDescriptionChange = async (id: string, value: string) => {
+    updateRow(id, 'description', value);
+
+    const row = rows.find(r => r.id === id);
+    console.log('DEBUG: isAutoMode=', isAutoMode, 'onPredictRow=', !!onPredictRow, 'value=', value);
+
+    // Если включен режим и текст >= 3 символов
+    if (isAutoMode && onPredictRow && value.length >= 3) {
+      console.log('DEBUG: Отправляем запрос к ML для', value);
+      const result = await onPredictRow(id, value);
+      console.log('DEBUG: Ответ от ML', result);
+
+      if (result) {
+        setRows(prev => prev.map(r => r.id === id ? {
+          ...r,
+          category: result.category,
+          subcategory: result.subcategory
+        } : r));
+      }
+    }
+  };
+
   const handleSave = async () => {
     if (rows.length === 0) return
     setSaving(true)
@@ -70,18 +95,15 @@ export function ImportPreviewModal({
     }
   }
 
-  // Если type === 'expenses', показываем колонку подкатегорий
   const isExpenses = type === 'expenses'
-  
-  // Сетка: для расходов 7 колонок (с подкатегорией), для доходов 6
-  const gridCols = isExpenses 
-    ? '100px 1fr 1fr 1.5fr 100px 1fr 40px' 
+  const gridCols = isExpenses
+    ? '100px 1fr 1fr 1.5fr 100px 1fr 40px'
     : '100px 1fr 1.5fr 100px 1fr 40px'
 
   return (
-    <Modal 
-      open={open} 
-      onClose={onClose} 
+    <Modal
+      open={open}
+      onClose={onClose}
       title={`Проверьте данные перед сохранением (${rows.length} шт.)`}
       size="lg"
       footer={
@@ -105,9 +127,29 @@ export function ImportPreviewModal({
         </div>
       )}
 
-      <p className="subtitle" style={{ marginBottom: 12 }}>
-        Вы можете отредактировать любую ячейку или удалить лишние строки.
-      </p>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <p className="subtitle" style={{ margin: 0 }}>
+          Вы можете отредактировать любую ячейку или удалить лишние строки.
+        </p>
+
+        {onPredictRow && (
+        <label style={{
+          display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer',
+          fontSize: 13,
+          color: 'var(--muted)',
+          fontFamily: "'Manrope', sans-serif",
+          fontWeight: 400
+        }}>
+          <input
+            type="checkbox"
+            checked={isAutoMode}
+            onChange={(e) => setIsAutoMode(e.target.checked)}
+            style={{ width: 16, height: 16, cursor: 'pointer' }}
+          />
+          Автозаполнение по описанию
+        </label>
+        )}
+      </div>
 
       <div className="data-table-wrap">
         <div className="data-head" style={{ gridTemplateColumns: gridCols }}>
@@ -126,15 +168,15 @@ export function ImportPreviewModal({
 
           return (
             <div key={r.id} className="data-row" style={{ gridTemplateColumns: gridCols }}>
-              <input 
-                type="date" 
-                className="text-input" 
+              <input
+                type="date"
+                className="text-input"
                 style={{ padding: '4px 6px', height: '28px', fontSize: '12px' }}
-                value={r.date} 
-                onChange={(e) => updateRow(r.id, 'date', e.target.value)} 
+                value={r.date}
+                onChange={(e) => updateRow(r.id, 'date', e.target.value)}
               />
-              
-              <div style={{ minWidth: 0, width: '100%' }}>
+
+              <div style={{ minWidth: 0 }}>
                 <SearchSelect
                   value={r.category}
                   onChange={(name) => {
@@ -147,7 +189,7 @@ export function ImportPreviewModal({
               </div>
 
               {isExpenses && (
-                <div style={{ minWidth: 0, width: '100%' }}>
+                <div style={{ minWidth: 0 }}>
                   <SearchSelect
                     value={r.subcategory || ''}
                     onChange={(name) => updateRow(r.id, 'subcategory', name)}
@@ -157,31 +199,31 @@ export function ImportPreviewModal({
                 </div>
               )}
 
-              <input 
-                className="text-input" 
+              <input
+                className="text-input"
                 style={{ padding: '4px 6px', height: '28px', fontSize: '12px' }}
-                value={r.description} 
-                onChange={(e) => updateRow(r.id, 'description', e.target.value)} 
+                value={r.description}
+                onChange={(e) => handleDescriptionChange(r.id, e.target.value)}
               />
 
-              <input 
-                type="number" 
+              <input
+                type="number"
                 step="0.01"
-                className="text-input" 
+                className="text-input"
                 style={{ padding: '4px 6px', height: '28px', fontSize: '12px', textAlign: 'right' }}
-                value={r.amount} 
-                onChange={(e) => updateRow(r.id, 'amount', e.target.value)} 
+                value={r.amount}
+                onChange={(e) => updateRow(r.id, 'amount', e.target.value)}
               />
 
-              <input 
-                className="text-input" 
+              <input
+                className="text-input"
                 style={{ padding: '4px 6px', height: '28px', fontSize: '12px' }}
-                value={r.comment} 
-                onChange={(e) => updateRow(r.id, 'comment', e.target.value)} 
+                value={r.comment}
+                onChange={(e) => updateRow(r.id, 'comment', e.target.value)}
               />
 
-              <button 
-                className="icon-button" 
+              <button
+                className="icon-button"
                 style={{ width: 28, height: 28, border: 'none', background: 'transparent' }}
                 onClick={() => deleteRow(r.id)}
                 title="Удалить"

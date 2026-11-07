@@ -66,9 +66,16 @@ export function HomePage() {
     return MONTHS.map((_, i) => m[i + 1] || 0)
   }, [stats])
 
-  const balanceByMonth = useMemo(() => {
-    return MONTHS.map((_, i) => (incomeByMonth[i] || 0) - (expenseByMonth[i] || 0))
-  }, [incomeByMonth, expenseByMonth])
+  // 1. Считаем накопительный баланс (для линии тренда)
+  const cumulativeBalanceByMonth = useMemo(() => {
+    let running = 0;
+    return MONTHS.map((_, i) => {
+      const income = incomeByMonth[i] || 0;
+      const expense = expenseByMonth[i] || 0;
+      running += (income - expense);
+      return running;
+    });
+  }, [incomeByMonth, expenseByMonth]);
 
   const currentMonthKey = period.kind === 'month' ? period.index : -1
   const totalIncome = currentMonthKey >= 0 ? (incomeByMonth[currentMonthKey] || 0) : incomeByMonth.reduce((a, b) => a + b, 0)
@@ -128,8 +135,8 @@ export function HomePage() {
   if (period.kind === 'all') {
     dynamicDatasets.push({
       type: 'line',
-      label: 'Баланс',
-      data: balanceByMonth, 
+      label: 'Баланс (накопительный)',
+      data: cumulativeBalanceByMonth, // <-- Используем новый массив
       borderColor: '#777b73',
       borderWidth: 1.5,
       pointBackgroundColor: '#fff',

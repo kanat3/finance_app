@@ -5,6 +5,7 @@ import {
 import { Icon } from '@/icons'
 import { Modal, ConfirmModal } from '@/ui/Modal'
 import { useToast } from '@/ui/Toast'
+import { SearchSelect } from '@/ui/SearchSelect' // <-- Импортируем SearchSelect
 import { DataTable, Col } from '@/ui/DataTable'
 import { ExportImport } from '@/ui/ExportImport'
 import { FilterModal } from '@/ui/FilterModal'
@@ -45,13 +46,61 @@ export function IncomesPage() {
   const [draft, setDraft] = useState<Draft | null>(null)
   const [del, setDel] = useState<Income | null>(null)
 
-  // Состояния для импорта
   const [importRes, setImportRes] = useState<ImportResult | null>(null)
   const [previewRows, setPreviewRows] = useState<ImportRow[]>([])
   const [previewWarning, setPreviewWarning] = useState<string | null>(null)
   const [isPreviewOpen, setIsPreviewOpen] = useState(false)
 
+  const [isAutoFilled, setIsAutoFilled] = useState(false)
+
   useEffect(() => { api.incomeCategories().then(setCats) }, [])
+
+  // АВТОПОДСТАНОВКА КАТЕГОРИИ (ML) В МОДАЛКЕ
+  useEffect(() => {
+    if (!draft || draft.description.length < 3) return;
+
+    // Если это новый доход и категория уже выбрана — не трогаем
+    if (!draft.id && draft.category_id && !isAutoFilled) return;
+    
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch('/api/predict-category', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ description: draft.description })
+        });
+        
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        if (data.confidence >= 50) {
+          const cat = cats.find(c => c.name.toLowerCase() === data.category.toLowerCase());
+          if (cat) {
+            setDraft(prev => {
+              if (!prev) return null;
+              if (prev.category_id === cat.id) return prev;
+              return { ...prev, category_id: cat.id };
+            });
+            setIsAutoFilled(true);
+          } else {
+            console.warn(`ML вернул категорию "${data.category}", но её нет в справочнике. Доступные: ${cats.map(c => c.name).join(', ')}`);
+          }
+        } else {
+          // Если модель не уверена, а категорию ставили мы — сбрасываем
+          setDraft(prev => {
+            if (!prev) return null;
+            if (!prev.category_id) return prev;
+            return { ...prev, category_id: null };
+          });
+          setIsAutoFilled(false);
+        }
+      } catch (e) {
+        console.warn("ML predict failed", e);
+      }
+    }, 600);
+    
+    return () => clearTimeout(timer);
+  }, [draft?.description, cats, isAutoFilled]);
 
   const load = useCallback(async (opts: { silent?: boolean } = {}) => {
     if (Date.now() < backoffUntilRef.current) return
@@ -88,10 +137,36 @@ export function IncomesPage() {
 
   useEffect(() => { load() }, [load])
 
+  // WEBSOCKET
   useEffect(() => {
-    const id = setInterval(() => load({ silent: true }), 10_000)
-    return () => clearInterval(id)
-  }, [load])
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/api/ws`;
+    
+    let ws: WebSocket | null = null;
+    let reconnectTimeout: ReturnType<typeof setTimeout>;
+
+    const connect = () => {
+      ws = new WebSocket(wsUrl);
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.event === 'update' && data.kind === 'incomes') {
+            load({ silent: true });
+          }
+        } catch (e) { console.warn(e) }
+      };
+      ws.onclose = () => {
+        reconnectTimeout = setTimeout(connect, 3000);
+      };
+      ws.onerror = () => ws?.close();
+    };
+
+    connect();
+    return () => {
+      clearTimeout(reconnectTimeout);
+      if (ws) { ws.onclose = null; ws.close(); }
+    };
+  }, [load]);
 
   useEffect(() => { setPage(1) }, [filters, pageSize])
 
@@ -128,6 +203,19 @@ export function IncomesPage() {
     try {
       if (draft.id) await api.updateIncome(draft.id, payload)
       else await api.createIncome(payload)
+      
+      if (!draft.id && draft.description) {
+        fetch('/api/feedback-train', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            description: draft.description,
+            category: cats.find(c => c.id === draft.category_id)?.name,
+            subcategory: null
+          })
+        }).catch(() => {})
+      }
+
       toast.show(draft.id ? 'Доход обновлён' : 'Доход добавлен', 'ok')
       setDraft(null); await load()
     } catch (e: any) { toast.show(e.message, 'err') }
@@ -166,7 +254,6 @@ export function IncomesPage() {
         const catName = row.category.trim();
         if (!catName) continue;
 
-        // 1. Ищем категорию или создаем её
         let cat = cats.find(c => c.name.toLowerCase() === catName.toLowerCase());
         
         if (!cat) {
@@ -180,7 +267,8 @@ export function IncomesPage() {
           }
         }
 
-        // 2. Создаем доход
+        if (!cat) continue;
+
         await api.createIncome({
           date: row.date,
           category_id: cat.id,
@@ -200,6 +288,29 @@ export function IncomesPage() {
       toast.show('Ошибка при сохранении: ' + e.message, 'err');
       throw e;
     }
+  }
+
+  const predictRowCategory = async (rowId: string, description: string) => {
+    try {
+      const res = await fetch('/api/predict-category', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description })
+      });
+      
+      if (!res.ok) return null;
+      const data = await res.json();
+      
+      if (data.confidence >= 50) {
+        return { 
+          category: data.category, 
+          subcategory: data.subcategory || '' 
+        };
+      }
+    } catch (e) {
+      console.warn("Row ML predict failed", e);
+    }
+    return null;
   }
 
   return (
@@ -252,7 +363,7 @@ export function IncomesPage() {
         onApply={setFilters}
         onClear={clearFilters}
         onClose={() => setFiltersOpen(false)}
-        categoriesForSub={() => []} // У доходов нет подкатегорий
+        categoriesForSub={() => []}
       />
 
       <Modal
@@ -269,20 +380,31 @@ export function IncomesPage() {
               <label>Дата</label>
               <DateInput value={draft.date} onChange={(val) => setDraft({ ...draft, date: val })} />
             </div>
+            
             <div className="modal-field">
               <label>Категория</label>
-              <select
-                className="text-input"
-                value={draft.category_id ?? ''}
-                onChange={(e) => setDraft({ ...draft, category_id: e.target.value ? +e.target.value : null })}
-              >
-                <option value="">—</option>
-                {cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <SearchSelect
+                value={draft.category_id ? (cats.find(c => c.id === draft.category_id)?.name ?? '') : ''}
+                onChange={(name) => {
+                  const c = cats.find(x => x.name === name) ?? null;
+                  setIsAutoFilled(false);
+                  setDraft({ ...draft, category_id: c?.id ?? null });
+                }}
+                options={cats.map(c => c.name)}
+                placeholder="Выберите категорию"
+              />
             </div>
+
             <div className="modal-field">
               <label>Описание</label>
-              <input className="text-input" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
+              <input 
+                className="text-input" 
+                value={draft.description} 
+                onChange={(e) => {
+                  setIsAutoFilled(false);
+                  setDraft({ ...draft, description: e.target.value });
+                }} 
+              />
             </div>
             <div className="modal-field">
               <label>Сумма</label>
@@ -302,23 +424,6 @@ export function IncomesPage() {
         onOk={doDelete} onCancel={() => setDel(null)}
       />
 
-      <Modal
-        open={!!importRes} onClose={() => setImportRes(null)}
-        title="Импорт завершён"
-        footer={<button className="primary" onClick={() => setImportRes(null)}>ОК</button>}
-      >
-        {importRes && <>
-          <p>
-            Добавлено: <b>{importRes.imported}</b>
-            {importRes.skipped ? <><br />Пропущено как дубликаты: <b>{importRes.skipped}</b></> : null}
-            {importRes.total_errors ? <><br />Ошибок: <b>{importRes.total_errors}</b></> : null}
-          </p>
-          {importRes.errors.length > 0 && (
-            <div className="err-list">{importRes.errors.map((e, i) => <div key={i}>{e}</div>)}</div>
-          )}
-        </>}
-      </Modal>
-
       <ImportPreviewModal
         open={isPreviewOpen}
         rows={previewRows}
@@ -327,6 +432,7 @@ export function IncomesPage() {
         onSave={handleSaveImported}
         type="incomes"
         categories={cats}
+        onPredictRow={predictRowCategory}
       />
     </>
   )

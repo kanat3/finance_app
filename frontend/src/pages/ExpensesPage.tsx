@@ -33,7 +33,6 @@ export function ExpensesPage() {
   const toast = useToast()
 
   const [filtersOpen, setFiltersOpen] = useState(false)
-
   const [rows, setRows] = useState<Expense[]>([])
   const [total, setTotal] = useState(0)
   const [totalAmount, setTotalAmount] = useState(0)
@@ -58,14 +57,68 @@ export function ExpensesPage() {
   const [previewWarning, setPreviewWarning] = useState<string | null>(null)
   const [isPreviewOpen, setIsPreviewOpen] = useState(false)
 
+  const [isAutoFilled, setIsAutoFilled] = useState(false)
+
   useEffect(() => {
     Promise.all([api.expenseCategories(), api.expenseSubcategories()])
       .then(([c, s]) => { setCats(c); setSubs(s) })
   }, [])
 
+  // АВТОПОДСТАНОВКА КАТЕГОРИИ (ML) В МОДАЛКЕ
+  useEffect(() => {
+    if (!draft || draft.description.length < 3) return;
+
+    // Если это новый расход и категория уже выбрана — не трогаем
+    if (!draft.id && draft.category_id && !isAutoFilled) return;
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch('/api/predict-category', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ description: draft.description })
+        });
+        
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        if (data.confidence >= 50) {
+          const cat = cats.find(c => c.name.toLowerCase() === data.category.toLowerCase());
+          if (cat) {
+            let subId = null;
+            if (data.subcategory) {
+              const sub = subs.find(s => 
+                s.category_id === cat.id && 
+                s.name.toLowerCase() === data.subcategory.toLowerCase()
+              );
+              if (sub) subId = sub.id;
+            }
+
+            setDraft(prev => {
+              if (!prev) return null;
+              if (prev.category_id === cat.id && prev.subcategory_id === subId) return prev;
+              return { ...prev, category_id: cat.id, subcategory_id: subId };
+            });
+            setIsAutoFilled(true);
+          }
+        } else {
+          setDraft(prev => {
+            if (!prev) return null;
+            if (!prev.category_id) return prev;
+            return { ...prev, category_id: null, subcategory_id: null };
+          });
+          setIsAutoFilled(false);
+        }
+      } catch (e) {
+        console.warn("ML predict failed", e);
+      }
+    }, 600);
+    
+    return () => clearTimeout(timer);
+  }, [draft?.description, cats, subs, isAutoFilled]);
+
   const load = useCallback(async (opts: { silent?: boolean } = {}) => {
     if (Date.now() < backoffUntilRef.current) return
-
     const scrollY = window.scrollY
     if (!opts.silent) setLoading(true)
 
@@ -101,10 +154,34 @@ export function ExpensesPage() {
 
   useEffect(() => { load() }, [load])
 
+  // WEBSOCKET
   useEffect(() => {
-    const id = setInterval(() => load({ silent: true }), 10_000)
-    return () => clearInterval(id)
-  }, [load])
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/api/ws`;
+    
+    let ws: WebSocket | null = null;
+    let reconnectTimeout: ReturnType<typeof setTimeout>;
+
+    const connect = () => {
+      ws = new WebSocket(wsUrl);
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.event === 'update' && data.kind === 'expenses') {
+            load({ silent: true });
+          }
+        } catch (e) { console.warn(e) }
+      };
+      ws.onclose = () => { reconnectTimeout = setTimeout(connect, 3000); };
+      ws.onerror = () => ws?.close();
+    };
+
+    connect();
+    return () => {
+      clearTimeout(reconnectTimeout);
+      if (ws) { ws.onclose = null; ws.close(); }
+    };
+  }, [load]);
 
   useEffect(() => { setPage(1) }, [filters, pageSize])
 
@@ -144,6 +221,19 @@ export function ExpensesPage() {
     try {
       if (draft.id) await api.updateExpense(draft.id, payload)
       else await api.createExpense(payload)
+      
+      if (!draft.id && draft.description) {
+        fetch('/api/feedback-train', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            description: draft.description,
+            category: cats.find(c => c.id === draft.category_id)?.name,
+            subcategory: subs.find(s => s.id === draft.subcategory_id)?.name
+          })
+        }).catch(() => {})
+      }
+
       toast.show(draft.id ? 'Расход обновлён' : 'Расход добавлен', 'ok')
       setDraft(null); await load()
     } catch (e: any) { toast.show(e.message, 'err') }
@@ -195,19 +285,21 @@ export function ExpensesPage() {
           }
         }
 
+        if (!cat) continue;
+
         let subId = null;
         const subName = row.subcategory?.trim();
         
         if (subName) {
           let sub = subs.find(s => 
-            s.category_id === cat!.id && 
+            s.category_id === cat.id && 
             s.name.toLowerCase() === subName.toLowerCase()
           );
 
           if (!sub) {
             try {
               const newSub = await api.createExpenseSubcategory({ 
-                category_id: cat!.id, 
+                category_id: cat.id, 
                 name: subName 
               });
               sub = newSub;
@@ -222,7 +314,7 @@ export function ExpensesPage() {
 
         await api.createExpense({
           date: row.date,
-          category_id: cat!.id,
+          category_id: cat.id,
           subcategory_id: subId,
           description: row.description || null,
           amount: parseFloat(row.amount as string) || 0,
@@ -240,6 +332,29 @@ export function ExpensesPage() {
       toast.show('Ошибка при сохранении: ' + e.message, 'err');
       throw e;
     }
+  }
+
+  const predictRowCategory = async (rowId: string, description: string) => {
+    try {
+      const res = await fetch('/api/predict-category', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description })
+      });
+      
+      if (!res.ok) return null;
+      const data = await res.json();
+      
+      if (data.confidence >= 50) {
+        return { 
+          category: data.category, 
+          subcategory: data.subcategory || '' 
+        };
+      }
+    } catch (e) {
+      console.warn("Row ML predict failed", e);
+    }
+    return null;
   }
 
   const draftSubs = draft ? subs.filter((s) => s.category_id === draft.category_id) : []
@@ -327,6 +442,7 @@ export function ExpensesPage() {
                 value={draft.category_id ? (cats.find(c => c.id === draft.category_id)?.name ?? '') : ''}
                 onChange={(name) => {
                   const c = cats.find(x => x.name === name) ?? null
+                  setIsAutoFilled(false);
                   setDraft({ ...draft, category_id: c?.id ?? null, subcategory_id: null })
                 }}
                 options={cats.map(c => c.name)}
@@ -347,7 +463,14 @@ export function ExpensesPage() {
             </div>
             <div className="modal-field">
               <label>Описание</label>
-              <input className="text-input" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} />
+              <input 
+                className="text-input" 
+                value={draft.description} 
+                onChange={(e) => {
+                  setIsAutoFilled(false); // Сбрасываем при ручном вводе
+                  setDraft({ ...draft, description: e.target.value });
+                }} 
+              />
             </div>
             <div className="modal-field">
               <label>Сумма</label>
@@ -367,23 +490,6 @@ export function ExpensesPage() {
         onOk={doDelete} onCancel={() => setDel(null)}
       />
 
-      <Modal
-        open={!!importRes} onClose={() => setImportRes(null)}
-        title="Импорт завершён"
-        footer={<button className="primary" onClick={() => setImportRes(null)}>ОК</button>}
-      >
-        {importRes && <>
-          <p>
-            Добавлено: <b>{importRes.imported}</b>
-            {importRes.skipped ? <><br />Пропущено как дубликаты: <b>{importRes.skipped}</b></> : null}
-            {importRes.total_errors ? <><br />Ошибок: <b>{importRes.total_errors}</b></> : null}
-          </p>
-          {importRes.errors.length > 0 && (
-            <div className="err-list">{importRes.errors.map((e, i) => <div key={i}>{e}</div>)}</div>
-          )}
-        </>}
-      </Modal>
-
       <ImportPreviewModal
         open={isPreviewOpen}
         rows={previewRows}
@@ -393,6 +499,7 @@ export function ExpensesPage() {
         type="expenses"
         categories={cats}
         subcategories={subs}
+        onPredictRow={predictRowCategory}
       />
     </>
   )
