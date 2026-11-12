@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  db_test:
+    image: postgres:15-alpine
+    container_name: traty_db_test
+    environment:
+      - POSTGRES_USER=traty
+      - POSTGRES_PASSWORD=traty
+      - POSTGRES_DB=traty_test
+      - RUN_SEED=${RUN_SEED:-0}
+    ports:
+      - "5433:5432" # Порт 5433, чтобы не конфликтовать с основной базой
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U traty -d traty_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 10

@@ -23,7 +23,6 @@ services:
       - "3000:3000"
     environment:
       DATABASE_URL: postgresql://traty:traty@db:5432/traty
-      EXCEL_PATH: /app/data/траты.xlsx
       FRONTEND_DIST: /app/frontend_dist
     volumes:
       - ./data:/app/data:ro
@@ -63,6 +62,7 @@ services:
       - DATABASE_URL=postgresql://traty:traty@db:5432/traty
       - REDIS_URL=redis://redis:6379/0
       - TZ=${TZ:-Europe/Moscow}
+      - RUN_SEED=${RUN_SEED:-0}
     depends_on:
       - redis
       - db

@@ -10,20 +10,19 @@ FROM python:3.11-slim
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        postgresql-client \
+        postgresql-client tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    TZ=Europe/Moscow
 
 COPY requirements.txt .
-
-RUN apt-get update && apt-get install -y tzdata && rm -rf /var/lib/apt/lists/*
-
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY --from=frontend-build /frontend/dist /app/frontend_dist
-COPY *.py *.sql ml ./
+
+COPY . /app/
 
 EXPOSE 3000
 

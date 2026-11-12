@@ -234,7 +234,8 @@ def _run_seed():
         conn.close()
 
 
-_run_seed()
+if os.environ.get("RUN_SEED", "1") == "1":
+    _run_seed()
 
 
 # ============================================================
